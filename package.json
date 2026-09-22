@@ -1,0 +1,78 @@
+{
+  "name": "@signal-kernel/settle",
+  "version": "0.0.0",
+  "description": "Execution validity for changing reactive systems.",
+  "type": "module",
+  "author": "Luciano Lee",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Luciano0322/settle.git"
+  },
+  "homepage": "https://github.com/Luciano0322/settle#readme",
+  "bugs": {
+    "url": "https://github.com/Luciano0322/settle/issues"
+  },
+  "keywords": [
+    "signal-kernel",
+    "reactivity",
+    "reactive-system",
+    "async",
+    "causal-consistency",
+    "invalidation",
+    "settlement",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "package:check": "publint",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm package:check",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && pnpm package:check && changeset publish"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "devDependencies": {
+    "@changesets/changelog-github": "^1.0.1",
+    "@changesets/cli": "^3.0.3",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "publint": "^0.3.24",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.1"
+  }
+}
