@@ -61,12 +61,12 @@ const output = settler.emit();
 
 ## Phase 0：測試與 package 基礎
 
-- [ ] 建立 TypeScript package、test runner、typecheck 與 build。
-- [ ] 接入最新版相容的 `signal-kernel` 與 async-runtime。
-- [ ] 建立只使用 package public exports 的 black-box test 目錄。
-- [ ] 建立 controlled deferred helper，以確定性方式控制 host execution 完成順序。
-- [ ] 加入 dependency/import guard，避免核心依賴 workflow、agent、model provider 或特定 host 套件。
-- [ ] 驗證空白 package 可在 Node ESM 中 import。
+- [x] 建立 TypeScript package、test runner、typecheck 與 build。
+- [x] 接入最新版相容的 `signal-kernel` 與 async-runtime。
+- [x] 建立只使用 package public exports 的 black-box test 目錄。
+- [x] 建立 controlled deferred helper，以確定性方式控制 host execution 完成順序。
+- [x] 加入 dependency/import guard，避免核心依賴 workflow、agent、model provider 或特定 host 套件。
+- [x] 驗證空白 package 可在 Node ESM 中 import。
 
 Phase 0 不實作 Settle domain behavior。
 
@@ -74,13 +74,13 @@ Phase 0 不實作 Settle domain behavior。
 
 目標是以最小端到端路徑建立 revision-scoped settlement。
 
-- [ ] **Red:** `receive()` 產生一個 causal revision。
-- [ ] **Green:** 實作最小 immutable revision identity。
-- [ ] **Red:** 沒有 required obligation 的 revision，`settle(revision)` 回傳
+- [x] **Red:** `receive()` 產生一個 causal revision。
+- [x] **Green:** 實作最小 immutable revision identity。
+- [x] **Red:** 沒有 required obligation 的 revision，`settle(revision)` 回傳
       `{ status: "settled", revision }`。
-- [ ] **Green:** 實作最小 settlement evaluation。
-- [ ] **Red:** settlement outcome 回報的是 caller 指定的 revision。
-- [ ] **Green:** 保持 revision-scoped outcome，不引入 current/latest 隱式行為。
+- [x] **Green:** 實作最小 settlement evaluation。
+- [x] **Red:** settlement outcome 回報的是 caller 指定的 revision。
+- [x] **Green:** 保持 revision-scoped outcome，不引入 current/latest 隱式行為。
 
 ### Phase 1 exit criterion
 
@@ -270,4 +270,3 @@ Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死�
 - 完整 trace taxonomy。
 - `/testing` public subpath。
 - 特定 host adapter package。
-

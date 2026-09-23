@@ -434,34 +434,26 @@ The invariant is not.
 
 The final API is not frozen.
 
-The intended direction is intentionally small:
+The implemented Phase 1 surface is intentionally small:
 
 ```ts
-import {
-  defineSettlement,
-  createSettler,
-} from "@signal-kernel/settle";
+import { createSettler } from "@signal-kernel/settle";
 
-const definition = defineSettlement<Input, Output>((context) => {
-  return {
-    receive(input) {
-      // Application owns how input is interpreted.
-    },
+const settler = createSettler<Input>();
+const revision = settler.receive(input);
 
-    readOutput() {
-      // Return the current valid output.
-    },
-  };
-});
+const outcome = await settler.settle(revision);
 
-const settler = createSettler(definition);
-
-settler.receive(input);
-
-await settler.settle();
-
-const output = settler.emit();
+if (outcome.status === "settled") {
+  // This revision has no unsatisfied required obligations.
+}
 ```
+
+The revision representation is opaque. Callers pass the identity returned by
+`receive()` back to revision-scoped operations rather than inspecting it.
+
+Execution association, required obligations, candidate submission, observable
+output, and supersession behavior will be introduced by later behavior slices.
 
 The important part is what is **not** here.
 
@@ -481,15 +473,15 @@ Those are orchestration concerns.
 
 ---
 
-## Conceptual lifecycle
+## Planned lifecycle
 
 A Settle instance may eventually expose a lifecycle similar to:
 
 ```ts
-type Settler<Input, Output, SnapshotState> = {
-  receive(input: Input): void;
+type Settler<Input, Output, SnapshotState, Revision> = {
+  receive(input: Input): Revision;
 
-  settle(): Promise<void>;
+  settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
 
   emit(): Output;
 
@@ -1065,9 +1057,11 @@ other execution hosts, then Settle is doing its job.
 
 ## Development and releases
 
-The repository uses pnpm, GitHub Actions, and Changesets. Consumer-visible
-changes should include a changeset so version and changelog updates remain part
-of the reviewable history.
+The repository uses pnpm, GitHub Actions, and Changesets. Releasable
+consumer-visible changes should include a changeset so version and changelog
+updates remain part of the reviewable history. Incomplete pre-release behavior
+slices remain recorded by commits and pull requests until the minimum core is
+ready for `0.1.0`.
 
 See [TDD checklist](./docs/TDD-checklist.md) for implementation order and
 [release process](./docs/RELEASING.md) for CI, Changesets, and npm publishing.
