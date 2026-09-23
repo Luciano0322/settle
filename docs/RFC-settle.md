@@ -46,7 +46,7 @@ Settle is responsible for determining:
 * which executions have been superseded
 * which results may commit
 * which settled results remain reusable
-* which work must be recomputed
+* which validity obligations require new application work
 * when current observable state is settled
 
 Settle is explicitly **not** a workflow engine.
@@ -172,6 +172,66 @@ commit accepted
 
 ---
 
+# Normative Validity Contracts
+
+The following contracts define Settle independently of any particular public
+API shape or execution host.
+
+## 1. Settlement is revision-scoped
+
+`settle(revision)` evaluates the causal revision supplied by the caller. When
+the returned Promise fulfills, it terminates with exactly one semantic outcome:
+
+```txt
+settled
+or
+superseded
+```
+
+A settlement operation does not silently retarget itself to a newer revision.
+If the host wants to settle the newer revision, it starts a separate settlement
+operation for that revision.
+
+Execution failures, disposal, invalid arguments, and other operational errors
+may reject the Promise according to the error contract. They do not create a
+third successful settlement outcome.
+
+## 2. Required obligations block settlement
+
+A causal revision cannot settle while any required validity obligation for that
+revision remains unsatisfied.
+
+A required obligation describes a condition that must hold before observable
+state is valid for the revision. It is not a task, queue entry, workflow node,
+or instruction for Settle to execute application work.
+
+Settle may identify or invalidate obligations through its internal reactive
+model. The application or host performs any application work needed to satisfy
+them.
+
+## 3. Candidate results have execution and causal identity
+
+Every candidate result is associated with:
+
+* one identified execution
+* the causal revision that authorized that execution
+
+Anonymous results, or results whose causal origin cannot be established, cannot
+commit as current observable state.
+
+## 4. Validation and commit are atomic
+
+Candidate validation and observable commit form one atomic validity transition
+with respect to causal revision changes.
+
+A candidate must not be validated under revision N and then become observable
+after revision N+1 has revoked its commit authority. If a causal revision change
+wins the ordering boundary, the obsolete candidate is rejected. If the commit
+wins, the committed result belongs to the revision that was current for that
+atomic transition.
+
+---
+
 # Settlement Definition
 
 Settle uses a stronger meaning of **settled** than JavaScript Promise
@@ -181,10 +241,16 @@ A Promise being fulfilled or rejected means that the Promise completed.
 
 It does not mean its result is still valid.
 
-Settle defines system settlement approximately as:
+For a causal revision N, Settle defines settlement approximately as:
 
-> **All observable accepted results are valid for the current causal state, and
-> no required current work remains capable of changing that observable state.**
+> **All observable accepted results are valid for revision N, and no required
+> validity obligation for revision N remains unsatisfied or capable of changing
+> that observable state.**
+
+`settle(N)` may report `settled` only while N remains the authoritative causal
+revision for that settlement operation. If N is superseded before settlement,
+`settle(N)` reports `superseded`; it does not begin waiting for the replacement
+revision.
 
 This definition intentionally does not require all physical execution to stop.
 
@@ -380,11 +446,21 @@ HOW TO RETRY
 HOW TO RESUME
 ```
 
-Settle determines:
+The host or application also performs the actual work of every execution.
+
+Settle drives only:
 
 ```txt
-STILL VALID?
+validity propagation
+invalidation
+internal reactive recomputation
+commit evaluation
+settlement evaluation
 ```
+
+It may identify that application work is required, but it does not run that
+work. The host decides whether and when to execute it and whether to begin a new
+settlement operation after supersession.
 
 Settle must not require a host to replace its existing workflow model with a
 Settle-specific DSL.
@@ -687,6 +763,24 @@ Initial candidate dependencies:
 The exact dependency arrangement remains open until duplicate-package behavior
 is tested.
 
+Settle development and validation target the latest compatible public contract
+of `@signal-kernel/async-runtime`. The older `0.3.0` dependency used by the
+initial `reactive-correction-graph` POC is evidence for behavior, not the
+implementation baseline for Settle.
+
+In particular, Settle interoperability must align with the current
+async-runtime semantics for:
+
+* object-form resource descriptors
+* active execution identity
+* stale callback and stale result containment
+* best-effort cancellation
+* explicit disposal and cleanup ownership
+* the distinction between visible stream value and stable stream value
+
+Alignment does not transfer application execution ownership to Settle and does
+not make an async-runtime stable value equivalent to a Settle-committed result.
+
 The Settle core package must not depend on:
 
 ```txt
@@ -720,6 +814,8 @@ export {
 } from "@signal-kernel/settle";
 
 export type {
+  SettlementRevision,
+  SettlementOutcome,
   SettlementDefinition,
   SettlementContext,
   Settler,
@@ -751,20 +847,43 @@ const definition = defineSettlement<Input, Output, SnapshotState>((context) => {
 
 const settler = createSettler(definition);
 
-settler.receive(input);
+const revision = settler.receive(input);
 
-await settler.settle();
+const outcome = await settler.settle(revision);
 
-const output = settler.emit();
+if (outcome.status === "settled") {
+  const output = settler.emit();
+}
 ```
+
+Conceptually, the settlement result distinguishes the two successful lifecycle
+outcomes:
+
+```ts
+type SettlementOutcome<Revision> =
+  | {
+      status: "settled";
+      revision: Revision;
+    }
+  | {
+      status: "superseded";
+      revision: Revision;
+      supersededBy: Revision;
+    };
+```
+
+The concrete revision representation and exact result type remain exploratory.
+The semantic requirements do not: the caller selects one revision, and a
+fulfilled settlement operation reports either `settled` or `superseded` for
+that revision.
 
 Conceptual lifecycle interface:
 
 ```ts
-type Settler<Input, Output, SnapshotState> = {
-  receive(input: Input): void;
+type Settler<Input, Output, SnapshotState, Revision> = {
+  receive(input: Input): Revision;
 
-  settle(): Promise<void>;
+  settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
 
   emit(): Output;
 
@@ -783,6 +902,30 @@ type Settler<Input, Output, SnapshotState> = {
 ```
 
 This API remains exploratory.
+
+The public interface will also need a minimal host-facing way to associate an
+execution with a revision and submit its candidate result. That interface is
+intentionally not named here yet. It must expose validity semantics without
+asking Settle to schedule or perform the application execution.
+
+Whatever concrete names are chosen, the interaction must preserve this
+ownership:
+
+```txt
+host starts application execution
+        |
+        v
+Settle associates execution identity with causal revision
+        |
+        v
+host performs application work
+        |
+        v
+host submits identified candidate result
+        |
+        v
+Settle atomically validates and commits, or rejects
+```
 
 In particular, Settle must avoid growing into:
 
@@ -818,6 +961,14 @@ An execution identity allows Settle to reason about:
 * trace history
 * commit authority
 
+Every execution known to Settle must be associated with exactly one causal
+revision. Every candidate result must identify both that execution and its
+causal revision before commit evaluation can occur.
+
+The host owns execution. Settle owns the identity and validity association
+needed to evaluate whether the execution's candidate still has commit
+authority.
+
 Execution identity is not necessarily a globally unique distributed workflow
 identifier.
 
@@ -848,6 +999,16 @@ The essential invariant is:
 
 > An execution result must be validated against the causal state that made that
 > execution relevant.
+
+A settlement operation captures one causal revision as its immutable scope.
+Creation and representation of revision values remain API-design questions,
+but a running settlement operation never changes its revision to follow newer
+causal state.
+
+Conceptually, `receive(input)` establishes a new causal revision and makes that
+revision available to the caller for later execution association and
+`settle(revision)`. Whether callers may provide externally assigned revision
+identities remains part of the representation decision.
 
 ---
 
@@ -890,6 +1051,11 @@ Whether commit authority appears directly in the public API remains unresolved.
 
 It may remain an internal invariant if that produces a safer API.
 
+Regardless of API shape, validation and observable commit must occur as one
+atomic transition with respect to causal revision changes. Settle must not
+return a reusable authorization that can be validated under one revision and
+applied after that revision has been superseded.
+
 ---
 
 # Selective Reuse
@@ -903,7 +1069,8 @@ A changes
 
 B depends on A
   -> invalidated
-  -> recompute
+  -> recomputation obligation recorded
+  -> host recomputes
 
 C independent of A
   -> remains valid
@@ -915,6 +1082,10 @@ instead of degrading all state changes into full workflow restart.
 
 Reuse is valid only when the runtime can establish that the previous result
 still represents current causal state.
+
+When invalidation makes new application work necessary, Settle records the
+corresponding required validity obligation. The host performs the work and
+submits an identified candidate result; Settle does not execute the work.
 
 ---
 
@@ -935,7 +1106,7 @@ supersede obsolete execution
 reuse unaffected settled values
         |
         v
-run required current work
+identify / track required current validity obligations
         |
         v
 validate candidate results
@@ -959,11 +1130,16 @@ However:
 
 The semantic definition remains based on validity of current observable state.
 
+This propagation loop contains no application executor. "Required" means that
+an obligation blocks settlement until the host satisfies it or the scoped
+revision is superseded. It does not mean Settle schedules, invokes, retries, or
+resumes application work.
+
 ---
 
 # Receive During Settlement
 
-A new `receive()` may happen while `settle()` is still waiting.
+A new `receive()` may happen while `settle(revision)` is still waiting.
 
 Example:
 
@@ -979,7 +1155,13 @@ receive revision 11
 
 A#10 may then become superseded.
 
-The current settlement operation follows the newest causal state.
+A settlement operation is scoped to the causal revision supplied when
+settlement begins. If revision 11 supersedes revision 10 before settlement,
+`settle(10)` terminates as `superseded` by revision 11. It does not wait for
+revision 11.
+
+The host may choose to call `settle(11)`. Automatically following newer
+revisions is host policy and is not a Settle core guarantee.
 
 Settle does not guarantee that revision 10 will independently finish producing
 a committed output.
@@ -1005,6 +1187,10 @@ completion.
 
 V1 propagates failures but does not automatically retry.
 
+A fulfilled settlement Promise has only the `settled` and `superseded`
+outcomes. A relevant operational failure may reject the Promise; it is not a
+third successful settlement outcome.
+
 Failure relevance depends on causal validity.
 
 Example:
@@ -1014,7 +1200,9 @@ execution A#1 fails
 ```
 
 If A#1 was already superseded, that failure does not necessarily invalidate
-current settlement.
+current settlement. Once the scoped revision is superseded, a late failure from
+its obsolete execution cannot replace the settlement operation's
+`superseded` outcome.
 
 The runtime should distinguish:
 
@@ -1041,7 +1229,7 @@ Requirements:
 * preserve required causal validity information
 * restore reusable settled values where safe
 * omit live pending execution objects
-* recompute omitted required work
+* restore omitted work as unsatisfied required obligations
 * isolate restored runtimes
 * reject incompatible schema or definition identities
 * prevent pre-restore work from mutating restored state
@@ -1067,6 +1255,10 @@ Settle instance B
 ```
 
 A and B never share live state.
+
+Restore does not execute omitted application work. It reconstructs enough
+validity state for Settle to report which obligations remain unsatisfied. The
+host decides whether and when to perform the work needed to satisfy them.
 
 Persistence location remains host-owned:
 
@@ -1108,6 +1300,11 @@ committed
 settled
 ```
 
+The trace must distinguish the subject of supersession. At minimum, consumers
+must be able to tell whether an event describes an execution losing commit
+authority or a revision-scoped settlement operation terminating because a
+newer revision superseded it.
+
 Important distinctions include:
 
 ```txt
@@ -1131,7 +1328,9 @@ What caused recomputation?
 
 Which execution superseded which?
 
-When did current state become settled?
+Which revision did a settlement operation evaluate?
+
+Did that operation settle or terminate as superseded?
 ```
 
 Candidate envelope fields include:
@@ -1186,11 +1385,14 @@ Example:
 
 ```txt
 revision 1
-  -> execution A#1 starts
+  -> host starts execution A#1
+  -> settle(revision 1) begins
 
 revision 2
   -> A#1 superseded
-  -> execution A#2 starts
+  -> settle(revision 1) terminates as superseded
+  -> host starts execution A#2
+  -> settle(revision 2) begins
 
 A#1 completes
   -> rejected
@@ -1198,7 +1400,7 @@ A#1 completes
 A#2 completes
   -> committed
 
-system
+settle(revision 2)
   -> settled
 ```
 
@@ -1286,13 +1488,13 @@ Inngest step
 restore Settle state
     |
     v
-receive current input
+revision = receive current input
     |
     v
-execute local work
+host executes local work
     |
     v
-settle
+settle(revision)
     |
     v
 serialize output + snapshot
@@ -1474,40 +1676,53 @@ Publishing `@signal-kernel/settle` remains gated.
 
 Before experimental `0.1.0`, evidence should prove:
 
-1. A generic plain-async example demonstrates supersession and settlement.
+1. `settle(revision)` fulfills as `settled` or `superseded` and never silently
+   follows a newer revision.
 
-2. Completion does not imply commit.
+2. A revision cannot settle while any required obligation remains unsatisfied.
 
-3. A superseded execution cannot commit.
+3. Every candidate result identifies both its execution and causal revision.
 
-4. Cancellation is not required for stale-result correctness.
+4. Candidate validation and observable commit are atomic with respect to
+   causal revision changes.
 
-5. Unaffected settled work can be reused.
+5. A generic plain-async example demonstrates supersession and settlement.
 
-6. Current required work can be recomputed selectively.
+6. Completion does not imply commit.
 
-7. Restored settled state can be reused.
+7. A superseded execution cannot commit.
 
-8. Pending work is not serialized and required omitted work recomputes.
+8. Cancellation is not required for stale-result correctness.
 
-9. Pre-restore execution cannot commit into restored state.
+9. Unaffected settled work can be reused.
 
-10. Two restored instances remain isolated.
+10. Settle can identify selective recomputation obligations without executing
+    application work.
 
-11. Trace distinguishes completion, supersession, commit, reuse, recomputation,
-    restoration, and settlement.
+11. Restored settled state can be reused.
 
-12. Disposal permanently removes commit authority from owned pending work.
+12. Pending work is not serialized; restore reconstructs unsatisfied
+    obligations and the host performs any required application work.
 
-13. LangGraph integration works without Settle owning graph topology.
+13. Pre-restore execution cannot commit into restored state.
 
-14. Inngest integration works without Settle owning retry or durable step
+14. Two restored instances remain isolated.
+
+15. Trace distinguishes completion, execution supersession, settlement
+    supersession, commit, reuse, recomputation, restoration, and settlement.
+
+16. Disposal permanently removes commit authority from owned pending work.
+
+17. LangGraph integration works without Settle owning graph topology or node
     execution.
 
-15. A Temporal prototype proves either Activity-local integration or
+18. Inngest integration works without Settle owning retry or durable step
+    execution.
+
+19. A Temporal prototype proves either Activity-local integration or
     deterministic workflow-safe validity state.
 
-16. Core Settle imports no LangGraph, Inngest, Temporal, correction, agent,
+20. Core Settle imports no LangGraph, Inngest, Temporal, correction, agent,
     model-provider, DOM, or rendering dependency.
 
 ---
@@ -1557,6 +1772,7 @@ execution
 execution identity
 current
 superseded
+required obligation
 candidate result
 commit
 reuse
@@ -1566,7 +1782,8 @@ settled
 
 4. Build the plain-async reference example.
 
-5. Build black-box tests before extracting implementation code.
+5. Build black-box tests for the four normative validity contracts before
+   extracting implementation code.
 
 6. Preserve the existing `reactive-correction-graph` regression baseline.
 
@@ -1608,13 +1825,19 @@ Extraction is based on invariants, not source-file ownership.
 # Experimental `0.1.0` Release Gates
 
 * plain-async changing-input tests pass
+* revision-scoped settlement outcome tests pass
+* a settlement operation does not follow a newer revision
+* unsatisfied required obligations prevent settlement
+* every candidate is associated with an execution and causal revision
+* validation/commit race tests prove atomicity against revision changes
+* Settle does not invoke application execution
 * stale completed result rejection tests pass
 * current-result commit tests pass
 * supersession tests pass
 * selective reuse tests pass
 * settlement-with-obsolete-running-work tests pass
 * snapshot restore tests pass
-* omitted-pending-work recomputation tests pass
+* omitted-pending-work obligation reconstruction tests pass
 * restored-instance isolation tests pass
 * pre-restore late-result rejection tests pass
 * disposal commit-rejection tests pass
@@ -1766,7 +1989,8 @@ Rejected because live asynchronous execution is not safely portable.
 
 Snapshots serialize validity and reusable state.
 
-Required work is reconstructed after restore.
+Unsatisfied required obligations are reconstructed after restore. The host
+performs any application work needed to satisfy them.
 
 ---
 
@@ -1779,7 +2003,8 @@ Required work is reconstructed after restore.
 * Host interoperability may reveal that the initial generic API contains hidden
   correction assumptions.
 
-* A generic execution registration API may accidentally become a workflow DSL.
+* A generic execution-association interface may accidentally grow execution or
+  scheduling semantics and become a workflow DSL.
 
 * Commit authority may become overly exposed or complicated.
 
@@ -1787,6 +2012,12 @@ Required work is reconstructed after restore.
 
 * Integration with host-managed retries may create unexpected duplicate side
   effects if boundaries are unclear.
+
+* A host-facing candidate interface may accidentally expose a check-then-commit
+  race instead of one atomic validity transition.
+
+* Required obligations may accidentally become scheduler tasks if the
+  application-execution ownership rule is not enforced.
 
 * Replay-based hosts may expose hidden nondeterminism in Settle.
 
@@ -1805,11 +2036,18 @@ feature accumulation.
 
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Minimum execution-registration API   | Deferred                | Plain async plus at least two host integrations must validate it without creating workflow DSL semantics.                                        |
-| Public commit-authority API          | Deferred                | Prefer internal enforcement unless external hosts require explicit authority handles.                                                            |
+| Minimum execution-association and candidate-submission interface | Deferred | Plain async plus at least two host integrations must validate the minimum host-facing interface without creating workflow DSL or execution semantics. |
+| Public commit-authority API          | Deferred                | Prefer one Settle-controlled validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.             |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
-| Effects that produce additional work | Deferred                | Must be demonstrated through settlement behavior without exposing scheduler internals.                                                           |
-| Definition of `settle()` completion  | Accepted in principle   | Current accepted observable state is valid and no required current work can still change it. Superseded physical work does not block settlement. |
+| Required-obligation declaration      | Deferred                | Must let Settle know what blocks settlement without representing obligations as work Settle executes.                                             |
+| Settlement outcome                   | Accepted                | A fulfilled `settle(revision)` reports `settled` or `superseded`; it never silently follows a newer revision.                                     |
+| Definition of settled                | Accepted                | The scoped revision remains authoritative, all accepted observable results are valid for it, and none of its required obligations remain unsatisfied. Superseded physical work does not block settlement. |
+| Application execution ownership      | Accepted                | The host performs all application work. Settle drives only validity propagation, invalidation, internal reactive recomputation, commit evaluation, and settlement evaluation. |
+| Candidate identity                   | Accepted                | Every candidate result is associated with an identified execution and causal revision.                                                           |
+| Atomic validation and commit         | Accepted                | Candidate validation and observable commit are atomic with respect to causal revision changes.                                                    |
+| Async-runtime alignment              | Accepted                | Develop and validate against the latest compatible async-runtime public contract; the correction POC's `0.3.0` dependency is not the baseline.   |
+| `emit()` after supersession           | Deferred                | Decide whether callers must use `inspect()` for the last stable output or whether `emit()` exposes only output settled for the authoritative revision. |
+| Operational error precedence         | Deferred                | Define rejection behavior for current failures and disposal while preserving `superseded` as the outcome once the scoped revision has been superseded. |
 | Retry ownership                      | Accepted                | Host responsibility. Settle v1 performs no automatic retry.                                                                                      |
 | Cancellation requirement             | Rejected                | Supersession and commit validation guarantee correctness independently of physical cancellation.                                                 |
 | Process continuity                   | Rejected as requirement | Settle must support serialized continuity through compatible snapshots.                                                                          |

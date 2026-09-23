@@ -1060,3 +1060,14 @@ It is:
 
 If that remains true across plain async code, LangGraph, Inngest, Temporal, and
 other execution hosts, then Settle is doing its job.
+
+---
+
+## Development and releases
+
+The repository uses pnpm, GitHub Actions, and Changesets. Consumer-visible
+changes should include a changeset so version and changelog updates remain part
+of the reviewable history.
+
+See [TDD checklist](./docs/TDD-checklist.md) for implementation order and
+[release process](./docs/RELEASING.md) for CI, Changesets, and npm publishing.
