@@ -10,11 +10,11 @@ An execution may finish successfully after the state that created it has already
 changed.
 
 When that happens, the execution is complete — but its result may no longer be
-valid.
+causally eligible to affect observable state.
 
-Settle tracks causal state, execution identity, supersession, commit validity,
-reuse, and settlement so obsolete results cannot become current observable
-state.
+Settle tracks causal state, execution identity, supersession, causal commit
+eligibility, reuse, and settlement so obsolete results cannot become current
+observable state.
 
 Published as:
 
@@ -105,7 +105,7 @@ Execution completion answers:
 
 > Did the operation finish?
 
-Commit validity answers:
+Causal commit eligibility answers:
 
 > Is its result still allowed to affect current state?
 
@@ -126,9 +126,10 @@ It answers questions such as:
 * Which causal state created this execution?
 * Is this execution still current?
 * Has it been superseded?
-* May this result commit?
+* Does this application-submitted result still have authority to commit?
 * Can an existing settled result still be reused?
-* Which work must be recomputed?
+* Which accepted results have been invalidated?
+* Which required validity obligations remain unsatisfied?
 * Has the current observable state settled?
 
 Its core semantic vocabulary includes:
@@ -139,7 +140,7 @@ revision
 execution identity
 invalidation
 supersession
-commit validity
+causal commit eligibility
 selective reuse
 recomputation
 settlement
@@ -154,6 +155,8 @@ Settle is **not a workflow engine**.
 
 It does not decide:
 
+* which candidate is better, correct, or worth submitting
+* how to interpret a domain score or model confidence
 * what task runs next
 * how workflow nodes connect
 * when a task should retry
@@ -177,8 +180,9 @@ Settle is not:
 
 Your existing execution host still decides what runs and when.
 
-> **Your workflow engine decides what runs.
-> Settle decides whether the result still counts.**
+> **Your application decides what is acceptable.
+> Your execution host decides what runs.
+> Settle decides whether a submitted result still counts.**
 
 ---
 
@@ -253,8 +257,12 @@ Settle uses a stronger meaning.
 
 A system is settled when:
 
-> **All accepted observable results are valid for the current causal state, and
-> no required current work remains capable of changing that observable state.**
+> **All accepted observable results remain causally eligible for the current
+> causal state, and no required validity obligation remains unsatisfied or
+> capable of changing that observable state.**
+
+Settlement does not certify that those results are factually correct, optimal,
+or high quality. Domain acceptance remains application-owned.
 
 That does not require every physical operation to stop.
 
@@ -324,9 +332,9 @@ resource management
 while:
 
 ```text
-commit validation
+causal commit validation
     =
-correctness
+stale-result correctness
 ```
 
 ---
@@ -380,7 +388,7 @@ Each execution may carry enough causal information to determine:
 * what state created it
 * whether it remains current
 * whether another execution superseded it
-* whether its result may commit
+* whether an application-submitted result retains causal commit eligibility
 * how it appears in traces
 
 Execution identity is a correctness concept.
@@ -405,7 +413,7 @@ performs work
 produces candidate result
       |
       v
-validate current authority
+validate current causal authority
       |
   ┌───┴─────────┐
   │             │
@@ -422,7 +430,7 @@ An execution may lose commit authority because of:
 * explicit invalidation
 * runtime disposal
 * restore boundaries
-* application-defined validity policy
+* application-declared causal invalidation
 
 The public API for commit authority is still experimental.
 
@@ -434,15 +442,22 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 1 surface is intentionally small:
+The implemented Phase 2 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
 
 const settler = createSettler<Input>();
 const revision = settler.receive(input);
+const obligation = settler.require(revision);
 
-const outcome = await settler.settle(revision);
+const settlement = settler.settle(revision);
+
+// The host owns and performs any application work.
+await hostWork();
+obligation.satisfy();
+
+const outcome = await settlement;
 
 if (outcome.status === "settled") {
   // This revision has no unsatisfied required obligations.
@@ -452,8 +467,13 @@ if (outcome.status === "settled") {
 The revision representation is opaque. Callers pass the identity returned by
 `receive()` back to revision-scoped operations rather than inspecting it.
 
-Execution association, required obligations, candidate submission, observable
-output, and supersession behavior will be introduced by later behavior slices.
+`require()` records a validity condition before settlement evaluation. The
+returned handle's `satisfy()` operation is idempotent and only reports that the
+condition now holds; it does not contain or invoke application work. Activity
+that is not registered as required does not block settlement.
+
+Execution association, candidate submission, observable output, and
+supersession behavior will be introduced by later behavior slices.
 
 The important part is what is **not** here.
 

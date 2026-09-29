@@ -44,9 +44,9 @@ Settle is responsible for determining:
 
 * which executions are current
 * which executions have been superseded
-* which results may commit
+* which application-submitted results retain causal commit eligibility
 * which settled results remain reusable
-* which validity obligations require new application work
+* which required validity obligations remain unsatisfied
 * when current observable state is settled
 
 Settle is explicitly **not** a workflow engine.
@@ -70,6 +70,12 @@ Existing workflow systems remain responsible for deciding:
 Settle answers a different question:
 
 > **Given that execution happened while the world may have changed, does this result still count?**
+
+The application owns domain acceptance: it defines what evidence or rules make
+a result worth submitting. The host chooses what to submit. Settle treats the
+candidate payload as opaque and does not rank alternatives, judge quality, or
+derive authority from a score or model confidence. Its decision is limited to
+whether the submitted result remains causally eligible to commit.
 
 A major design goal is therefore interoperability with existing execution hosts
 rather than replacement of them.
@@ -101,7 +107,7 @@ execution completion
 from:
 
 ```txt
-execution validity
+causal execution validity
 ```
 
 and from:
@@ -138,7 +144,8 @@ A#1 eventually completes
 
 Completion alone does not allow the result to become observable.
 
-The result must still pass the current validity boundary.
+The application must have selected the result for submission, and the result
+must still pass the current causal-validity boundary.
 
 ```txt
 A#1 completed
@@ -209,6 +216,29 @@ Settle may identify or invalidate obligations through its internal reactive
 model. The application or host performs any application work needed to satisfy
 them.
 
+The Phase 2 core interface represents this distinction directly:
+
+```ts
+const obligation = settler.require(revision);
+const settlement = settler.settle(revision);
+
+await hostWork();
+obligation.satisfy();
+
+const outcome = await settlement;
+```
+
+Callers register required obligations before settlement evaluation for the
+revision. `require()` does not accept an executable callback or Promise.
+`satisfy()` is an idempotent validity notification: it can satisfy only the
+obligation represented by its own handle and never executes application work.
+Activity not registered as a required obligation does not block settlement.
+
+When later phases associate an obligation with a candidate result, satisfaction
+must be part of the same Settle-controlled atomic transition as candidate
+causal commit eligibility validation and observable commit. A host must not be
+able to use manual satisfaction to bypass that validation.
+
 ## 3. Candidate results have execution and causal identity
 
 Every candidate result is associated with:
@@ -219,16 +249,24 @@ Every candidate result is associated with:
 Anonymous results, or results whose causal origin cannot be established, cannot
 commit as current observable state.
 
-## 4. Validation and commit are atomic
+The application decides which result has domain acceptance and is therefore
+worth submitting. Candidate identity establishes provenance, not quality or
+correctness, and matching identity is not by itself a domain judgment. The
+public interface should prefer deriving candidate provenance from an execution
+association rather than requiring callers to repeatedly assemble execution and
+revision identities that can be mismatched.
 
-Candidate validation and observable commit form one atomic validity transition
-with respect to causal revision changes.
+## 4. Causal validation and commit are atomic
 
-A candidate must not be validated under revision N and then become observable
-after revision N+1 has revoked its commit authority. If a causal revision change
-wins the ordering boundary, the obsolete candidate is rejected. If the commit
-wins, the committed result belongs to the revision that was current for that
-atomic transition.
+Candidate causal commit eligibility validation and observable commit form one
+atomic validity transition with respect to causal revision changes. This
+validation does not inspect or decide the candidate's domain quality.
+
+A candidate must not pass causal validation under revision N and then become
+observable after revision N+1 has revoked its commit authority. If a causal
+revision change wins the ordering boundary, the obsolete candidate is rejected.
+If the commit wins, the committed result belongs to the revision that was
+current for that atomic transition.
 
 ---
 
@@ -243,9 +281,13 @@ It does not mean its result is still valid.
 
 For a causal revision N, Settle defines settlement approximately as:
 
-> **All observable accepted results are valid for revision N, and no required
-> validity obligation for revision N remains unsatisfied or capable of changing
-> that observable state.**
+> **All observable accepted results remain causally eligible for revision N,
+> and no required validity obligation for revision N remains unsatisfied or
+> capable of changing that observable state.**
+
+Here, "valid" means causally eligible under the application's declared validity
+conditions. A settled revision is not evidence that its results are factually
+correct, optimal, or high quality.
 
 `settle(N)` may report `settled` only while N remains the authoritative causal
 revision for that settlement operation. If N is superseded before settlement,
@@ -543,10 +585,10 @@ cancel()
 is resource management.
 
 ```txt
-commit validation
+causal commit validation
 ```
 
-is correctness.
+provides stale-result correctness. It does not establish domain correctness.
 
 ---
 
@@ -1045,16 +1087,16 @@ An execution may lose commit authority because of:
 * explicit invalidation
 * runtime disposal
 * restore boundaries
-* application-defined validity rules
+* application-declared causal invalidation
 
 Whether commit authority appears directly in the public API remains unresolved.
 
 It may remain an internal invariant if that produces a safer API.
 
-Regardless of API shape, validation and observable commit must occur as one
-atomic transition with respect to causal revision changes. Settle must not
-return a reusable authorization that can be validated under one revision and
-applied after that revision has been superseded.
+Regardless of API shape, causal commit eligibility validation and observable
+commit must occur as one atomic transition with respect to causal revision
+changes. Settle must not return a reusable authorization that can be validated
+under one revision and applied after that revision has been superseded.
 
 ---
 
@@ -1069,8 +1111,9 @@ A changes
 
 B depends on A
   -> invalidated
-  -> recomputation obligation recorded
-  -> host recomputes
+  -> previous accepted result loses causal eligibility
+  -> required validity obligation recorded as unsatisfied
+  -> host decides whether and how to recompute
 
 C independent of A
   -> remains valid
@@ -1683,8 +1726,8 @@ Before experimental `0.1.0`, evidence should prove:
 
 3. Every candidate result identifies both its execution and causal revision.
 
-4. Candidate validation and observable commit are atomic with respect to
-   causal revision changes.
+4. Candidate causal commit eligibility validation and observable commit are
+   atomic with respect to causal revision changes.
 
 5. A generic plain-async example demonstrates supersession and settlement.
 
@@ -1696,8 +1739,8 @@ Before experimental `0.1.0`, evidence should prove:
 
 9. Unaffected settled work can be reused.
 
-10. Settle can identify selective recomputation obligations without executing
-    application work.
+10. Settle can identify selectively invalidated validity conditions and their
+    unsatisfied obligations without deciding or executing application work.
 
 11. Restored settled state can be reused.
 
@@ -2016,6 +2059,10 @@ performs any application work needed to satisfy them.
 * A host-facing candidate interface may accidentally expose a check-then-commit
   race instead of one atomic validity transition.
 
+* Candidate payloads, model confidence, or domain scores may accidentally leak
+  into Settle core and turn causal commit eligibility into a domain-quality
+  judgment.
+
 * Required obligations may accidentally become scheduler tasks if the
   application-execution ownership rule is not enforced.
 
@@ -2037,14 +2084,15 @@ feature accumulation.
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Minimum execution-association and candidate-submission interface | Deferred | Plain async plus at least two host integrations must validate the minimum host-facing interface without creating workflow DSL or execution semantics. |
-| Public commit-authority API          | Deferred                | Prefer one Settle-controlled validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.             |
+| Public commit-authority API          | Deferred                | Prefer one Settle-controlled causal-validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.      |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
-| Required-obligation declaration      | Deferred                | Must let Settle know what blocks settlement without representing obligations as work Settle executes.                                             |
+| Required-obligation declaration      | Accepted for Phase 2    | `require(revision)` returns an idempotent `satisfy()` handle. It records validity only, accepts no executable work, and must not bypass causal commit eligibility validation in later phases. |
 | Settlement outcome                   | Accepted                | A fulfilled `settle(revision)` reports `settled` or `superseded`; it never silently follows a newer revision.                                     |
-| Definition of settled                | Accepted                | The scoped revision remains authoritative, all accepted observable results are valid for it, and none of its required obligations remain unsatisfied. Superseded physical work does not block settlement. |
+| Definition of settled                | Accepted                | The scoped revision remains authoritative, all accepted observable results remain causally eligible for it, and none of its required obligations remain unsatisfied. It does not certify domain correctness or quality. |
 | Application execution ownership      | Accepted                | The host performs all application work. Settle drives only validity propagation, invalidation, internal reactive recomputation, commit evaluation, and settlement evaluation. |
+| Domain acceptance                    | Accepted                | The application defines what results are worth submitting. Settle treats candidate payloads as opaque and does not rank, score, or judge their quality. |
 | Candidate identity                   | Accepted                | Every candidate result is associated with an identified execution and causal revision.                                                           |
-| Atomic validation and commit         | Accepted                | Candidate validation and observable commit are atomic with respect to causal revision changes.                                                    |
+| Atomic validation and commit         | Accepted                | Candidate causal commit eligibility validation and observable commit are atomic with respect to causal revision changes; this is not domain-quality validation. |
 | Async-runtime alignment              | Accepted                | Develop and validate against the latest compatible async-runtime public contract; the correction POC's `0.3.0` dependency is not the baseline.   |
 | `emit()` after supersession           | Deferred                | Decide whether callers must use `inspect()` for the last stable output or whether `emit()` exposes only output settled for the authoritative revision. |
 | Operational error precedence         | Deferred                | Define rejection behavior for current failures and disposal while preserving `superseded` as the outcome once the scoped revision has been superseded. |
@@ -2083,8 +2131,8 @@ Its responsibility is narrow:
 
 Its primary guarantee is:
 
-> **Only results that remain valid for current causal state may become current
-> observable state.**
+> **Only application-submitted results that remain causally eligible for current
+> causal state may become current observable state.**
 
 Its defining distinction is:
 
