@@ -1,7 +1,29 @@
 declare const settlementRevisionBrand: unique symbol;
+declare const executionIdentityBrand: unique symbol;
 
 export type SettlementRevision = Readonly<{
   readonly [settlementRevisionBrand]: "SettlementRevision";
+}>;
+
+export type ExecutionIdentity = Readonly<{
+  readonly [executionIdentityBrand]: "ExecutionIdentity";
+}>;
+
+export type CandidateSubmissionOutcome<
+  Revision extends SettlementRevision = SettlementRevision,
+> = Readonly<{
+  status: "committed";
+  revision: Revision;
+  execution: ExecutionIdentity;
+}>;
+
+export type SettlementExecution<
+  Candidate = never,
+  Revision extends SettlementRevision = SettlementRevision,
+> = Readonly<{
+  identity: ExecutionIdentity;
+  revision: Revision;
+  submit(candidate: Candidate): CandidateSubmissionOutcome<Revision>;
 }>;
 
 export type SettlementOutcome<
@@ -21,15 +43,23 @@ export type RequiredObligation = Readonly<{
   satisfy(): void;
 }>;
 
-export type Settler<Input> = {
+export type Settler<Input, Candidate = never> = {
   receive(input: Input): SettlementRevision;
   require(revision: SettlementRevision): RequiredObligation;
+  associateExecution<Revision extends SettlementRevision>(
+    revision: Revision,
+  ): SettlementExecution<Candidate, Revision>;
+  emit(): Candidate | undefined;
   settle<Revision extends SettlementRevision>(
     revision: Revision,
   ): Promise<SettlementOutcome<Revision>>;
 };
 
-export function createSettler<Input>(): Settler<Input> {
+export function createSettler<Input, Candidate = never>(): Settler<
+  Input,
+  Candidate
+> {
+  let committedCandidate: Candidate | undefined;
   const revisionStates = new WeakMap<
     SettlementRevision,
     {
@@ -69,6 +99,26 @@ export function createSettler<Input>(): Settler<Input> {
           }
         },
       });
+    },
+    associateExecution(revision) {
+      const identity = Object.freeze({}) as ExecutionIdentity;
+
+      return Object.freeze({
+        identity,
+        revision,
+        submit(candidate) {
+          committedCandidate = candidate;
+
+          return Object.freeze({
+            status: "committed" as const,
+            revision,
+            execution: identity,
+          });
+        },
+      });
+    },
+    emit() {
+      return committedCandidate;
     },
     settle(revision) {
       const state = revisionStates.get(revision)!;

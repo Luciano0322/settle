@@ -26,7 +26,7 @@
 - 一次只新增一個行為測試及其最小 implementation。
 - 結構性 refactor 留到階段性 review，不混入 red–green cycle。
 
-## 待確認的公開測試 seam
+## 公開測試 seam
 
 第一個測試開始前，應先確認測試所跨越的 public seam。最小需要表達的
 caller 能力是：
@@ -44,9 +44,11 @@ caller 能力是：
 ```ts
 const revision = settler.receive(input);
 const obligation = settler.require(revision);
+const execution = settler.associateExecution(revision);
 const settlement = settler.settle(revision);
 
-await hostWork();
+const candidate = await hostWork();
+execution.submit(candidate);
 obligation.satisfy();
 
 const outcome = await settlement;
@@ -56,15 +58,19 @@ Phase 2 已確認 `require(revision)` / `obligation.satisfy()` 這個最小 seam
 `require()` 只登記 validity condition，不接收 application callback；required
 obligation 應在該 revision 的 settlement evaluation 前登記。
 
-`associateExecution()` 與 `submit()` 的具體表示方式仍未定案。Phase 3
-若將 obligation 與 candidate 關聯，必須由有效 commit 原子地滿足，不能讓
-host 以手動 `satisfy()` 繞過 causal commit eligibility validation。
+Phase 3 採用 `associateExecution(revision)` 回傳 revision-bound execution handle，
+並由該 handle 的 `submit(candidate)` 保留 execution 與 revision provenance。
+這是目前最小公開 seam，仍需在 host interoperability 階段驗證是否足夠。
+
+Phase 5 若將 obligation 與 candidate 關聯，必須由有效 commit 原子地滿足，
+不能讓 host 以手動 `satisfy()` 繞過 causal commit eligibility validation。
 
 Application 決定什麼結果具有 domain acceptance，host 決定提交什麼；Settle
 將 candidate payload 視為 opaque data，不進行 ranking、scoring、quality
 judgment，也不從 model confidence 推導 commit authority。
 
-`submit()` 應表達單一 Settle-controlled causal-validation-and-commit transition。
+Phase 3 的 `submit()` 已是唯一能讓 candidate 進入 observable state 的
+Settle-controlled transition；Phase 5 才加入完整的 causal validation 與 atomicity。
 公開 interface 不應提供可在驗證後保留、並於未來才使用的 commit authority，
 否則會形成 RFC 所禁止的 check-then-commit race。
 
@@ -118,20 +124,20 @@ revision 就不能 settled；Settle 也不會因此接管 application execution�
 
 ## Phase 3：execution 與 candidate identity
 
-- [ ] **Red:** host 可以將 execution 關聯至恰好一個 causal revision。
-- [ ] **Green:** 加入 execution identity 與 revision association。
-- [ ] **Red:** application 選擇的 opaque candidate 透過 execution association
+- [x] **Red:** host 可以將 execution 關聯至恰好一個 causal revision。
+- [x] **Green:** 加入 execution identity 與 revision association。
+- [x] **Red:** application 選擇的 opaque candidate 透過 execution association
       提交時，保留 identified execution 與 causal revision provenance。
-- [ ] **Green:** submission 從 execution association 取得 provenance，不要求
+- [x] **Green:** submission 從 execution association 取得 provenance，不要求
       caller 重複組裝已由 association 決定的 identity。
-- [ ] **Red:** 沒有 identified execution association 的 candidate 無法進入
+- [x] **Public type surface:** 沒有 identified execution association 的 candidate 無法進入
       causal commit evaluation。
-- [ ] **Green:** public submission seam 只接受已建立 association 的 execution。
-- [ ] **Red:** candidate completion 不會自動成為 observable commit。
-- [ ] **Green:** 只有 Settle-controlled submission transition 才能更新 observable state。
-- [ ] **Red:** candidate payload、score 或 model confidence 不會改變 causal
+- [x] **Interface:** public submission seam 只存在於已建立 association 的 execution。
+- [x] **Red:** candidate completion 不會自動成為 observable commit。
+- [x] **Green:** 只有 Settle-controlled submission transition 才能更新 observable state。
+- [x] **Regression:** candidate payload、score 或 model confidence 不會改變 causal
       commit eligibility。
-- [ ] **Green:** Settle 將 candidate payload 視為 opaque data，不實作 domain
+- [x] **Interface:** Settle 將 candidate payload 視為 opaque data，不實作 domain
       ranking、quality judgment 或 acceptance policy。
 
 不要為了測試 identity mismatch 而刻意設計讓 caller 能任意拼裝 execution ID

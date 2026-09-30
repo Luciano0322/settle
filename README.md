@@ -442,22 +442,23 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 2 surface is intentionally small:
+The implemented Phase 3 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
 
-const settler = createSettler<Input>();
+const settler = createSettler<Input, Candidate>();
 const revision = settler.receive(input);
-const obligation = settler.require(revision);
-
-const settlement = settler.settle(revision);
+const execution = settler.associateExecution(revision);
 
 // The host owns and performs any application work.
-await hostWork();
-obligation.satisfy();
+const candidate = await hostWork();
 
-const outcome = await settlement;
+// Completion alone changes no observable Settle state.
+const submission = execution.submit(candidate);
+const output = settler.emit();
+
+const outcome = await settler.settle(revision);
 
 if (outcome.status === "settled") {
   // This revision has no unsatisfied required obligations.
@@ -472,8 +473,16 @@ returned handle's `satisfy()` operation is idempotent and only reports that the
 condition now holds; it does not contain or invoke application work. Activity
 that is not registered as required does not block settlement.
 
-Execution association, candidate submission, observable output, and
-supersession behavior will be introduced by later behavior slices.
+`associateExecution(revision)` creates a distinct opaque execution identity
+bound to that revision. Candidate submission exists only on this association,
+so callers do not assemble or repeat provenance fields. `submit(candidate)` is
+the only current transition that exposes a completed candidate through
+`emit()`; Settle does not inspect candidate scores, confidence, or other domain
+content.
+
+This Phase 3 behavior establishes provenance, not the final causal-validity
+guarantee. Revision supersession and atomic causal validation at submission are
+introduced by Phase 4 and Phase 5 respectively.
 
 The important part is what is **not** here.
 

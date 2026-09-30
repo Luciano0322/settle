@@ -847,56 +847,53 @@ glue code.
 
 # Proposed Public Surface
 
-The following names express intended semantics and are not frozen APIs.
+The Phase 3 implementation currently exposes the following provisional public
+surface:
 
 ```ts
-export {
-  defineSettlement,
-  createSettler,
-} from "@signal-kernel/settle";
+export { createSettler } from "@signal-kernel/settle";
 
 export type {
+  CandidateSubmissionOutcome,
+  ExecutionIdentity,
+  RequiredObligation,
+  SettlementExecution,
   SettlementRevision,
   SettlementOutcome,
-  SettlementDefinition,
-  SettlementContext,
   Settler,
-  SettlementInspection,
-  SettlementSnapshot,
-  SettlementTraceEvent,
-  SettlementError,
 } from "@signal-kernel/settle";
 ```
 
-Conceptual usage:
+Current usage:
 
 ```ts
-const definition = defineSettlement<Input, Output, SnapshotState>((context) => {
-  return {
-    receive(input) {
-      // Application owns input interpretation.
-    },
-
-    readOutput() {
-      // Return output valid for current causal state.
-    },
-
-    snapshotState() {
-      // Application-owned serializable state.
-    },
-  };
-});
-
-const settler = createSettler(definition);
-
+const settler = createSettler<Input, Candidate>();
 const revision = settler.receive(input);
+const execution = settler.associateExecution(revision);
+
+// The host, not Settle, performs application work.
+const candidate = await hostWork();
+
+// The handle supplies execution and causal-revision provenance.
+const submission = execution.submit(candidate);
+const output = settler.emit();
 
 const outcome = await settler.settle(revision);
-
-if (outcome.status === "settled") {
-  const output = settler.emit();
-}
 ```
+
+Host completion alone does not update observable Settle state. Submission is
+available only through the revision-bound execution handle, and candidate
+payload is opaque to Settle. The returned submission outcome identifies both
+the execution and causal revision.
+
+This Phase 3 surface proves candidate provenance only. Phase 4 introduces
+revision supersession, and Phase 5 makes causal eligibility validation and
+observable commit one atomic transition. Until those phases are complete,
+`status: "committed"` must not be read as protection against a concurrent or
+newer revision.
+
+The following longer-term lifecycle shape remains conceptual rather than an
+implemented API:
 
 Conceptually, the settlement result distinguishes the two successful lifecycle
 outcomes:
@@ -943,12 +940,11 @@ type Settler<Input, Output, SnapshotState, Revision> = {
 };
 ```
 
-This API remains exploratory.
-
-The public interface will also need a minimal host-facing way to associate an
-execution with a revision and submit its candidate result. That interface is
-intentionally not named here yet. It must expose validity semantics without
-asking Settle to schedule or perform the application execution.
+This broader API remains exploratory. The minimum host-facing association seam
+is currently named `associateExecution(revision)`, and its returned handle owns
+`submit(candidate)`. Host integration work may still reveal a need for a
+serializable adapter form, but the core handle prevents callers from freely
+combining execution and revision identities.
 
 Whatever concrete names are chosen, the interaction must preserve this
 ownership:
@@ -2083,7 +2079,7 @@ feature accumulation.
 
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Minimum execution-association and candidate-submission interface | Deferred | Plain async plus at least two host integrations must validate the minimum host-facing interface without creating workflow DSL or execution semantics. |
+| Minimum execution-association and candidate-submission interface | Provisional for Phase 3 | `associateExecution(revision)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. Plain async plus at least two host integrations must validate this shape before it is frozen. |
 | Public commit-authority API          | Deferred                | Prefer one Settle-controlled causal-validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.      |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
 | Required-obligation declaration      | Accepted for Phase 2    | `require(revision)` returns an idempotent `satisfy()` handle. It records validity only, accepts no executable work, and must not bypass causal commit eligibility validation in later phases. |
