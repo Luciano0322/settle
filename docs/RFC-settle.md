@@ -848,7 +848,7 @@ glue code.
 
 # Proposed Public Surface
 
-The Phase 5 implementation currently exposes the following provisional public
+The Phase 6 implementation currently exposes the following provisional public
 surface:
 
 ```ts
@@ -860,6 +860,8 @@ export type {
   ExecutionIdentity,
   RequiredObligation,
   SettlementExecution,
+  SettlementResource,
+  SettlementResourceDescriptor,
   SettlementRevision,
   SettlementOutcome,
   Settler,
@@ -885,6 +887,40 @@ const output = settler.emit();
 
 const outcome = await settlement;
 ```
+
+Reactive selective reuse is exposed through a small host-driven resource
+handle:
+
+```ts
+const settler = createSettler<State>();
+
+const b = settler.resource({
+  input: (state) => state.a,
+  run: async (input, context) => hostWork(input, context.signal),
+});
+
+const revision = settler.receive(state);
+
+if (b.required(revision)) {
+  await b.run(revision);
+}
+
+await settler.settle(revision);
+const output = b.emit();
+```
+
+The resource descriptor is implemented with signal-kernel reactive primitives
+and a manual async-runtime resource. `receive()` evaluates selector validity
+and records obligations, but does not invoke `run`. Application execution
+begins only when the host explicitly calls `resource.run(revision)`.
+
+An invalid resource temporarily withholds its previous value from `emit()`.
+Because that validity is itself reactive, downstream selectors are invalidated
+in the same propagation boundary. Unchanged selectors retain their committed
+value and require no host execution. Successful execution performs causal
+validation, observable commit, downstream validity propagation, and obligation
+satisfaction as one synchronous transition with respect to revision changes.
+Superseded execution results are rejected before they become observable.
 
 Supersession is revision-scoped and permanently revokes older execution
 authority:
@@ -923,6 +959,12 @@ revision changes, observable commit, and execution-associated obligations.
 either submission commits first for its identified revision, or supersession
 wins and the stale candidate never becomes observable. No reusable commit
 authorization is exposed between validation and commit.
+
+The Phase 6 resource surface adds selective invalidation without adding a
+scheduler. `required(revision)` reports a validity requirement;
+`run(revision)` is an explicit host command; and `emit()` exposes only the
+currently valid committed resource result. Settle never automatically invokes
+the application callback.
 
 The following longer-term lifecycle shape remains conceptual rather than an
 implemented API:
@@ -2121,7 +2163,8 @@ feature accumulation.
 | Domain acceptance                    | Accepted                | The application defines what results are worth submitting. Settle treats candidate payloads as opaque and does not rank, score, or judge their quality. |
 | Candidate identity                   | Accepted                | Every candidate result is associated with an identified execution and causal revision.                                                           |
 | Atomic validation and commit         | Accepted                | Candidate causal commit eligibility validation and observable commit are atomic with respect to causal revision changes; this is not domain-quality validation. |
-| Async-runtime alignment              | Accepted                | Develop and validate against the latest compatible async-runtime public contract; the correction POC's `0.3.0` dependency is not the baseline.   |
+| Reactive resource interface          | Accepted for Phase 6    | `resource({ input, run })` returns only `required(revision)`, host-driven `run(revision)`, and validity-guarded `emit()`. It preserves selective invalidation without becoming a scheduler. |
+| Async-runtime alignment              | Accepted                | Reactive resources directly use the compatible async-runtime `0.4.1` manual-resource contract; the correction POC's `0.3.0` dependency is not the baseline. |
 | `emit()` after supersession           | Deferred                | Decide whether callers must use `inspect()` for the last stable output or whether `emit()` exposes only output settled for the authoritative revision. |
 | Operational error precedence         | Deferred                | Define rejection behavior for current failures and disposal while preserving `superseded` as the outcome once the scoped revision has been superseded. |
 | Retry ownership                      | Accepted                | Host responsibility. Settle v1 performs no automatic retry.                                                                                      |

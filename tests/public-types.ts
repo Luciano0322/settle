@@ -18,6 +18,19 @@ const executionHandleExposesOnlyAtomicSubmission: Expect<
 > = true;
 void executionHandleExposesOnlyAtomicSubmission;
 
+const reactiveSettler = createSettler<{ dependency: string }>();
+const resource = reactiveSettler.resource({
+  input: (state) => state.dependency,
+  run: async (input) => `result:${input}`,
+});
+
+type ResourceSurface = keyof typeof resource;
+const resourceHandleExposesOnlyHostDrivenBehavior: Expect<
+  Equal<ResourceSurface, "required" | "run" | "emit">
+> = true;
+void resource;
+void resourceHandleExposesOnlyHostDrivenBehavior;
+
 // Candidate submission requires the revision-bound execution handle.
 // @ts-expect-error Settler intentionally has no direct submission operation.
 settler.submit("candidate");

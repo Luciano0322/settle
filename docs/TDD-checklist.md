@@ -224,19 +224,19 @@ Settle 不判斷其品質、真實性或 model confidence。
 
 ## Phase 6：reactive invalidation 與 selective reuse
 
-- [ ] A 改變時，依賴 A 的 B 被 invalidated。
-- [ ] B 的 invalidation 使先前 accepted result 對新 revision 失去 causal
+- [x] A 改變時，依賴 A 的 B 被 invalidated。
+- [x] B 的 invalidation 使先前 accepted result 對新 revision 失去 causal
       eligibility，並記錄 unsatisfied required validity obligation。
-- [ ] host 決定是否以及如何執行 application work 來滿足該 obligation。
-- [ ] 與 A 無關的 C 保留有效 observable result。
-- [ ] 被 reuse 的 C 不要求 host 重新執行。
-- [ ] 舊 B execution 的 late candidate 無法 commit。
-- [ ] 新 B candidate 的 causal commit 與相應 obligation satisfaction 是同一
+- [x] host 決定是否以及如何執行 application work 來滿足該 obligation。
+- [x] 與 A 無關的 C 保留有效 observable result。
+- [x] 被 reuse 的 C 不要求 host 重新執行。
+- [x] 舊 B execution 的 late candidate 無法 commit。
+- [x] 新 B candidate 的 causal commit 與相應 obligation satisfaction 是同一
       atomic transition。
-- [ ] downstream validity propagation 持續到穩定。
-- [ ] internal reactive recomputation 可以發生，但不呼叫 application work。
-- [ ] obsolete、仍在執行但已不 required 的 work 不阻擋目前 revision settlement。
-- [ ] 同一 dependency 反覆 invalidation 不會遺失或重複計算 obligation。
+- [x] downstream validity propagation 持續到穩定。
+- [x] internal reactive recomputation 可以發生，但不呼叫 application work。
+- [x] obsolete、仍在執行但已不 required 的 work 不阻擋目前 revision settlement。
+- [x] 同一 dependency 反覆 invalidation 不會遺失或重複計算 obligation。
 
 ### Phase 6 exit criterion
 

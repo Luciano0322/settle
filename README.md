@@ -442,7 +442,7 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 5 surface is intentionally small:
+The implemented Phase 6 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
@@ -467,6 +467,41 @@ if (outcome.status === "settled") {
   // This revision has no unsatisfied required obligations.
 }
 ```
+
+Reactive resources add selective invalidation without transferring execution
+ownership to Settle:
+
+```ts
+const settler = createSettler<State>();
+
+const b = settler.resource({
+  input: (state) => state.a,
+  run: async (input, context) => hostWork(input, context.signal),
+});
+
+const revision = settler.receive(state);
+
+if (b.required(revision)) {
+  // The host explicitly decides to start this application work.
+  await b.run(revision);
+}
+
+const outcome = await settler.settle(revision);
+const output = b.emit();
+```
+
+`resource()` uses signal-kernel dependency tracking and a manual
+`@signal-kernel/async-runtime` resource. `receive()` only evaluates reactive
+validity; it never calls the descriptor's `run` callback. A changed selected
+input creates one revision-scoped obligation. An unchanged selected input
+reuses its committed output without host execution.
+
+While a resource is invalid, `emit()` does not expose its previous result.
+That validity state is reactive, so dependent resource selectors are also
+invalidated. A successful host-started `run(revision)` atomically validates the
+revision, exposes the new result, propagates downstream validity, and satisfies
+the corresponding obligation. A late result from a superseded revision cannot
+become observable.
 
 Settlement remains scoped to the selected revision:
 
@@ -516,6 +551,10 @@ and `receive()` share one synchronous ordering boundary: either the candidate
 commits first for its revision, or the newer revision wins and the stale
 candidate is rejected without becoming observable. The interface exposes no
 reusable commit authorization between validation and commit.
+
+Phase 6 preserves fine-grained reactive reuse. Settle identifies which
+resources require current results and keeps settlement pending; the host still
+chooses whether and when to call each required resource's `run(revision)`.
 
 The important part is what is **not** here.
 
