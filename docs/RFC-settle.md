@@ -847,7 +847,7 @@ glue code.
 
 # Proposed Public Surface
 
-The Phase 3 implementation currently exposes the following provisional public
+The Phase 4 implementation currently exposes the following provisional public
 surface:
 
 ```ts
@@ -881,16 +881,37 @@ const output = settler.emit();
 const outcome = await settler.settle(revision);
 ```
 
+Supersession is revision-scoped and permanently revokes older execution
+authority:
+
+```ts
+const firstRevision = settler.receive(firstInput);
+const firstExecution = settler.associateExecution(firstRevision);
+settler.require(firstRevision);
+const firstSettlement = settler.settle(firstRevision);
+
+const secondRevision = settler.receive(secondInput);
+
+await firstSettlement;
+// { status: "superseded", revision: firstRevision, supersededBy: secondRevision }
+
+firstExecution.submit(lateCandidate);
+// { status: "rejected", reason: "superseded", ... }
+```
+
 Host completion alone does not update observable Settle state. Submission is
 available only through the revision-bound execution handle, and candidate
 payload is opaque to Settle. The returned submission outcome identifies both
 the execution and causal revision.
 
-This Phase 3 surface proves candidate provenance only. Phase 4 introduces
-revision supersession, and Phase 5 makes causal eligibility validation and
-observable commit one atomic transition. Until those phases are complete,
-`status: "committed"` must not be read as protection against a concurrent or
-newer revision.
+The Phase 4 surface proves candidate provenance, revision-scoped settlement,
+and rejection of a candidate submitted after its revision has been superseded.
+It does not wait for or cancel the obsolete physical execution.
+
+Phase 5 still needs to prove the complete atomic ordering contract between
+causal revision changes, observable commit, and candidate-associated
+obligations. The Phase 4 stale-result behavior does not by itself complete that
+contract.
 
 The following longer-term lifecycle shape remains conceptual rather than an
 implemented API:
@@ -2079,7 +2100,7 @@ feature accumulation.
 
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Minimum execution-association and candidate-submission interface | Provisional for Phase 3 | `associateExecution(revision)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. Plain async plus at least two host integrations must validate this shape before it is frozen. |
+| Minimum execution-association and candidate-submission interface | Provisional | `associateExecution(revision)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. The Phase 3 shape remains in Phase 4; plain async plus at least two host integrations must validate it before it is frozen. |
 | Public commit-authority API          | Deferred                | Prefer one Settle-controlled causal-validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.      |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
 | Required-obligation declaration      | Accepted for Phase 2    | `require(revision)` returns an idempotent `satisfy()` handle. It records validity only, accepts no executable work, and must not bypass causal commit eligibility validation in later phases. |

@@ -178,3 +178,119 @@ describe("execution association", () => {
     expect(settler.emit()).toBe(candidate);
   });
 });
+
+describe("revision supersession", () => {
+  it("terminates a waiting revision when newer input supersedes it", async () => {
+    const settler = createSettler<string>();
+    const firstRevision = settler.receive("first input");
+    settler.require(firstRevision);
+    const settlement = settler.settle(firstRevision);
+    let observedOutcome: Awaited<typeof settlement> | undefined;
+    void settlement.then((outcome) => {
+      observedOutcome = outcome;
+    });
+
+    const secondRevision = settler.receive("second input");
+    await Promise.resolve();
+
+    expect(observedOutcome).toEqual({
+      status: "superseded",
+      revision: firstRevision,
+      supersededBy: secondRevision,
+    });
+  });
+
+  it("keeps the old and new revision settlement operations independent", async () => {
+    const settler = createSettler<string>();
+    const firstRevision = settler.receive("first input");
+    settler.require(firstRevision);
+    const firstSettlement = settler.settle(firstRevision);
+
+    const secondRevision = settler.receive("second input");
+    const secondObligation = settler.require(secondRevision);
+    const secondSettlement = settler.settle(secondRevision);
+    let secondOutcomeObserved = false;
+    void secondSettlement.then(() => {
+      secondOutcomeObserved = true;
+    });
+
+    await expect(firstSettlement).resolves.toEqual({
+      status: "superseded",
+      revision: firstRevision,
+      supersededBy: secondRevision,
+    });
+    await Promise.resolve();
+    expect(secondOutcomeObserved).toBe(false);
+
+    secondObligation.satisfy();
+    await expect(secondSettlement).resolves.toEqual({
+      status: "settled",
+      revision: secondRevision,
+    });
+  });
+
+  it("does not wait for superseded host execution to physically finish", async () => {
+    const settler = createSettler<string, string>();
+    const firstRevision = settler.receive("first input");
+    settler.associateExecution(firstRevision);
+    const firstObligation = settler.require(firstRevision);
+    const firstSettlement = settler.settle(firstRevision);
+    const hostWork = deferred<string>();
+    let hostWorkCompleted = false;
+    void hostWork.promise.then(() => {
+      hostWorkCompleted = true;
+      firstObligation.satisfy();
+    });
+
+    const secondRevision = settler.receive("second input");
+
+    await expect(firstSettlement).resolves.toEqual({
+      status: "superseded",
+      revision: firstRevision,
+      supersededBy: secondRevision,
+    });
+    expect(hostWorkCompleted).toBe(false);
+  });
+
+  it("rejects a late candidate from a superseded execution", async () => {
+    const settler = createSettler<string, string>();
+    const firstRevision = settler.receive("first input");
+    const firstExecution = settler.associateExecution(firstRevision);
+    const firstHostWork = deferred<string>();
+
+    const secondRevision = settler.receive("second input");
+    const secondExecution = settler.associateExecution(secondRevision);
+    secondExecution.submit("current candidate");
+
+    firstHostWork.resolve("stale candidate");
+    const staleCandidate = await firstHostWork.promise;
+    const staleSubmission = firstExecution.submit(staleCandidate);
+
+    expect(staleSubmission).toEqual({
+      status: "rejected",
+      reason: "superseded",
+      revision: firstRevision,
+      execution: firstExecution.identity,
+      supersededBy: secondRevision,
+    });
+    expect(settler.emit()).toBe("current candidate");
+  });
+
+  it("returns a consistent superseded outcome to repeated settlement callers", async () => {
+    const settler = createSettler<string>();
+    const firstRevision = settler.receive("first input");
+    settler.require(firstRevision);
+    const waitingCaller = settler.settle(firstRevision);
+
+    const secondRevision = settler.receive("second input");
+    const laterCaller = settler.settle(firstRevision);
+    const expectedOutcome = {
+      status: "superseded" as const,
+      revision: firstRevision,
+      supersededBy: secondRevision,
+    };
+
+    await expect(waitingCaller).resolves.toEqual(expectedOutcome);
+    await expect(laterCaller).resolves.toEqual(expectedOutcome);
+  });
+});

@@ -11,11 +11,19 @@ export type ExecutionIdentity = Readonly<{
 
 export type CandidateSubmissionOutcome<
   Revision extends SettlementRevision = SettlementRevision,
-> = Readonly<{
-  status: "committed";
-  revision: Revision;
-  execution: ExecutionIdentity;
-}>;
+> =
+  | Readonly<{
+      status: "committed";
+      revision: Revision;
+      execution: ExecutionIdentity;
+    }>
+  | Readonly<{
+      status: "rejected";
+      reason: "superseded";
+      revision: Revision;
+      execution: ExecutionIdentity;
+      supersededBy: SettlementRevision;
+    }>;
 
 export type SettlementExecution<
   Candidate = never,
@@ -60,9 +68,11 @@ export function createSettler<Input, Candidate = never>(): Settler<
   Candidate
 > {
   let committedCandidate: Candidate | undefined;
+  let currentRevision: SettlementRevision | undefined;
   const revisionStates = new WeakMap<
     SettlementRevision,
     {
+      supersededBy?: SettlementRevision;
       unsatisfiedRequiredObligations: number;
       settlementWaiters: Set<() => void>;
     }
@@ -76,6 +86,19 @@ export function createSettler<Input, Candidate = never>(): Settler<
         unsatisfiedRequiredObligations: 0,
         settlementWaiters: new Set(),
       });
+      const previousRevision = currentRevision;
+      currentRevision = revision;
+
+      if (previousRevision !== undefined) {
+        const previousState = revisionStates.get(previousRevision)!;
+        previousState.supersededBy = revision;
+
+        for (const settle of previousState.settlementWaiters) {
+          settle();
+        }
+        previousState.settlementWaiters.clear();
+      }
+
       return revision;
     },
     require(revision) {
@@ -107,6 +130,17 @@ export function createSettler<Input, Candidate = never>(): Settler<
         identity,
         revision,
         submit(candidate) {
+          const state = revisionStates.get(revision)!;
+          if (state.supersededBy !== undefined) {
+            return Object.freeze({
+              status: "rejected" as const,
+              reason: "superseded" as const,
+              revision,
+              execution: identity,
+              supersededBy: state.supersededBy,
+            });
+          }
+
           committedCandidate = candidate;
 
           return Object.freeze({
@@ -122,9 +156,26 @@ export function createSettler<Input, Candidate = never>(): Settler<
     },
     settle(revision) {
       const state = revisionStates.get(revision)!;
+      if (state.supersededBy !== undefined) {
+        return Promise.resolve({
+          status: "superseded",
+          revision,
+          supersededBy: state.supersededBy,
+        });
+      }
+
       if (state.unsatisfiedRequiredObligations > 0) {
         return new Promise<SettlementOutcome<typeof revision>>((resolve) => {
           state.settlementWaiters.add(() => {
+            if (state.supersededBy !== undefined) {
+              resolve({
+                status: "superseded",
+                revision,
+                supersededBy: state.supersededBy,
+              });
+              return;
+            }
+
             resolve({ status: "settled", revision });
           });
         });

@@ -442,7 +442,7 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 3 surface is intentionally small:
+The implemented Phase 4 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
@@ -465,6 +465,23 @@ if (outcome.status === "settled") {
 }
 ```
 
+Settlement remains scoped to the selected revision:
+
+```ts
+const firstRevision = settler.receive(firstInput);
+const firstExecution = settler.associateExecution(firstRevision);
+settler.require(firstRevision);
+const firstSettlement = settler.settle(firstRevision);
+
+const secondRevision = settler.receive(secondInput);
+
+await firstSettlement;
+// { status: "superseded", revision: firstRevision, supersededBy: secondRevision }
+
+firstExecution.submit(lateCandidate);
+// { status: "rejected", reason: "superseded", ... }
+```
+
 The revision representation is opaque. Callers pass the identity returned by
 `receive()` back to revision-scoped operations rather than inspecting it.
 
@@ -480,9 +497,13 @@ the only current transition that exposes a completed candidate through
 `emit()`; Settle does not inspect candidate scores, confidence, or other domain
 content.
 
-This Phase 3 behavior establishes provenance, not the final causal-validity
-guarantee. Revision supersession and atomic causal validation at submission are
-introduced by Phase 4 and Phase 5 respectively.
+Phase 4 permanently revokes an older execution's commit authority when a newer
+revision arrives. Its eventual physical completion does not delay the
+`superseded` outcome, and a late candidate cannot replace observable state.
+
+Phase 5 still needs to prove the complete atomic causal-validation-and-commit
+contract, including candidate-associated obligation behavior. That contract is
+not implied merely by the Phase 4 stale-result regression tests.
 
 The important part is what is **not** here.
 

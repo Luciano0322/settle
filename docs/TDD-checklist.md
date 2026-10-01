@@ -153,20 +153,21 @@ identity 的 adapter 才需要 runtime malformed-input rejection test。
 
 ## Phase 4：revision supersession
 
-- [ ] **Red:** `settle(N)` 等待期間收到 N+1，結果是
+- [x] **Red:** `settle(N)` 等待期間收到 N+1，結果是
       `{ status: "superseded", revision: N, supersededBy: N + 1 }`。
-- [ ] **Green:** revision change 終止舊 revision 的 settlement operation。
-- [ ] **Red:** `settle(N)` 不會改成等待 N+1。
-- [ ] **Green:** 每個 settlement operation 固定持有自己的 revision scope。
-- [ ] **Red:** host 可另外呼叫 `settle(N + 1)`。
-- [ ] **Green:** 新舊 settlement operations 的狀態彼此獨立。
-- [ ] **Red:** N 的 host execution 即使仍在執行，也不阻擋 `settle(N)` 回報 superseded。
-- [ ] **Green:** physical completion/cancellation 與 semantic supersession 分離。
-- [ ] **Red:** N 的 late candidate 不能成為 N+1 的 observable state。
-- [ ] **Green:** supersession 永久撤銷舊 execution 的 causal commit authority，
+- [x] **Green:** revision change 終止舊 revision 的 settlement operation。
+- [x] **Regression:** `settle(N)` 不會改成等待 N+1；host 可另外呼叫
+      `settle(N + 1)`。
+- [x] **Invariant:** 每個 settlement operation 固定持有自己的 revision scope，
+      新舊 settlement operations 的狀態彼此獨立。
+- [x] **Regression:** N 的 host execution 即使仍在執行，也不阻擋
+      `settle(N)` 回報 superseded。
+- [x] **Invariant:** physical completion/cancellation 與 semantic supersession 分離。
+- [x] **Red:** N 的 late candidate 不能成為 N+1 的 observable state。
+- [x] **Green:** supersession 永久撤銷舊 execution 的 causal commit authority，
       不對 candidate 內容做品質判斷。
-- [ ] **Red:** 同一 revision 的多個 settlement callers 得到一致 outcome。
-- [ ] **Green:** settlement termination 可以安全地重複觀察。
+- [x] **Regression:** 同一 revision 的多個 settlement callers 得到一致 outcome。
+- [x] **Invariant:** settlement termination 可以安全地重複觀察。
 
 ### Phase 4 exit criterion
 
