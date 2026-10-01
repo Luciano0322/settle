@@ -43,13 +43,13 @@ caller 能力是：
 
 ```ts
 const revision = settler.receive(input);
-const obligation = settler.require(revision);
-const execution = settler.associateExecution(revision);
+const execution = settler.associateExecution(revision, {
+  requiredForSettlement: true,
+});
 const settlement = settler.settle(revision);
 
 const candidate = await hostWork();
 execution.submit(candidate);
-obligation.satisfy();
 
 const outcome = await settlement;
 ```
@@ -62,15 +62,17 @@ Phase 3 採用 `associateExecution(revision)` 回傳 revision-bound execution ha
 並由該 handle 的 `submit(candidate)` 保留 execution 與 revision provenance。
 這是目前最小公開 seam，仍需在 host interoperability 階段驗證是否足夠。
 
-Phase 5 若將 obligation 與 candidate 關聯，必須由有效 commit 原子地滿足，
-不能讓 host 以手動 `satisfy()` 繞過 causal commit eligibility validation。
+Phase 5 以 `requiredForSettlement: true` 建立 execution-associated obligation。
+這個 obligation 不向 host 暴露 `satisfy()`；只有有效 `submit(candidate)` 能在
+observable commit 的同一個 transition 內滿足它。一般 validity condition 仍使用
+Phase 2 的手動 obligation seam。
 
 Application 決定什麼結果具有 domain acceptance，host 決定提交什麼；Settle
 將 candidate payload 視為 opaque data，不進行 ranking、scoring、quality
 judgment，也不從 model confidence 推導 commit authority。
 
-Phase 3 的 `submit()` 已是唯一能讓 candidate 進入 observable state 的
-Settle-controlled transition；Phase 5 才加入完整的 causal validation 與 atomicity。
+`submit()` 是唯一能讓 candidate 進入 observable state 的 Settle-controlled
+causal-validation-and-commit transition。
 公開 interface 不應提供可在驗證後保留、並於未來才使用的 commit authority，
 否則會形成 RFC 所禁止的 check-then-commit race。
 
@@ -181,25 +183,31 @@ identity 的 adapter 才需要 runtime malformed-input rejection test。
 causal commit eligibility；application 已先決定要提交哪個 opaque candidate，
 Settle 不判斷其品質、真實性或 model confidence。
 
-- [ ] **Red:** candidate 先 commit、之後才 receive N+1 時，commit 明確屬於 N。
-- [ ] **Green:** submission 在單一不可分割的狀態轉換內完成驗證與寫入。
-- [ ] **Red:** receive N+1 先發生時，N 的 candidate 必須被拒絕。
-- [ ] **Green:** revision change 與 candidate submission 經過同一 serialization point。
-- [ ] **Red:** rejected stale candidate 從未短暫出現在 observable state。
-- [ ] **Green:** 不使用先驗證、再非同步寫入的兩階段流程。
-- [ ] **Red:** 因 stale revision、revoked authority 或 invalid provenance 被拒絕的
-      candidate 不會滿足其 required obligation。
-- [ ] **Green:** causal rejection 保留 obligation 的 unsatisfied 狀態。
-- [ ] **Red:** causally eligible candidate 成功 commit 時，相關 obligation 不會在
+- [x] **Regression:** candidate 先 commit、之後才 receive N+1 時，commit 明確屬於 N。
+- [x] **Invariant:** submission 在單一不可分割的狀態轉換內完成驗證與寫入。
+- [x] **Regression:** receive N+1 先發生時，N 的 candidate 必須被拒絕。
+- [x] **Invariant:** revision change 與 candidate submission 經過同一 serialization point。
+- [x] **Regression:** rejected stale candidate 從未短暫出現在 observable state。
+- [x] **Invariant:** 不使用先驗證、再非同步寫入的兩階段流程。
+- [x] **Regression:** rejected stale candidate 不會滿足目前 revision 的 required
+      execution 或寫入 observable state。
+- [x] **Invariant:** causal rejection 不執行 execution-associated obligation
+      satisfaction；superseded revision 的 settlement outcome 優先於其舊 obligation。
+- [x] **Red:** causally eligible candidate 成功 commit 時，相關 obligation 不會在
       commit 前或 commit 後留下可觀察的中間狀態。
-- [ ] **Green:** observable commit 與 associated obligation satisfaction 屬於同一
+- [x] **Green:** observable commit 與 associated obligation satisfaction 屬於同一
       atomic state transition。
-- [ ] **Red:** public interface 無法取得可延後使用的 commit authorization。
-- [ ] **Green:** interface 只暴露一次性的 causal-validation-and-commit operation。
-- [ ] **Red:** 以大量確定性交錯順序或 property test 證明每次競爭只能線性化為：
+- [x] **Regression:** 未指定 `requiredForSettlement` 的 execution 維持 optional，
+      不會自行阻擋 settlement。
+- [x] **Public type surface:** execution handle 無法取得可延後使用的 commit
+      authorization。
+- [x] **Interface:** execution handle 只暴露單一 causal-validation-and-commit
+      operation `submit(candidate)`。
+- [x] **Exhaustive ordering:** 對兩個同步狀態轉換的全部可能先後順序進行測試，
+      證明每次競爭只能線性化為：
   - commit 先贏；或
   - supersession 先贏。
-- [ ] **Green:** 排除 stale candidate 成為 observable state 的第三種結果。
+- [x] **Invariant:** 排除 stale candidate 成為 observable state 的第三種結果。
 
 ### Phase 5 exit criterion：minimum Settle core
 
@@ -312,7 +320,6 @@ Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死�
 
 - execution-association 與 candidate-submission 的最終方法名稱及資料形狀。
 - causal revision 的具體表示方式。
-- candidate-associated obligation 如何只能由有效 commit 原子地滿足。
 - supersession 後 `emit()` 的完整語義。
 - operational error、dispose 與 supersession 的 precedence。
 - 完整 trace taxonomy。

@@ -294,3 +294,114 @@ describe("revision supersession", () => {
     await expect(laterCaller).resolves.toEqual(expectedOutcome);
   });
 });
+
+describe("atomic candidate submission", () => {
+  it("keeps an execution optional unless it is required for settlement", async () => {
+    const settler = createSettler<string, string>();
+    const revision = settler.receive("input");
+    settler.associateExecution(revision);
+
+    await expect(settler.settle(revision)).resolves.toEqual({
+      status: "settled",
+      revision,
+    });
+  });
+
+  it("commits a candidate and satisfies its required execution together", async () => {
+    const settler = createSettler<string, string>();
+    const revision = settler.receive("input");
+    const execution = settler.associateExecution(revision, {
+      requiredForSettlement: true,
+    });
+    const settlement = settler.settle(revision);
+    let settlementObserved = false;
+    void settlement.then(() => {
+      settlementObserved = true;
+    });
+
+    await Promise.resolve();
+
+    expect(settlementObserved).toBe(false);
+    expect(settler.emit()).toBeUndefined();
+
+    const submission = execution.submit("candidate");
+
+    expect(submission).toEqual({
+      status: "committed",
+      revision,
+      execution: execution.identity,
+    });
+    expect(settler.emit()).toBe("candidate");
+    await expect(settlement).resolves.toEqual({
+      status: "settled",
+      revision,
+    });
+  });
+
+  it("does not let a rejected stale candidate satisfy current required work", async () => {
+    const settler = createSettler<string, string>();
+    const firstRevision = settler.receive("first input");
+    const staleExecution = settler.associateExecution(firstRevision, {
+      requiredForSettlement: true,
+    });
+
+    const secondRevision = settler.receive("second input");
+    const currentExecution = settler.associateExecution(secondRevision, {
+      requiredForSettlement: true,
+    });
+    const currentSettlement = settler.settle(secondRevision);
+    let currentSettlementObserved = false;
+    void currentSettlement.then(() => {
+      currentSettlementObserved = true;
+    });
+
+    const staleSubmission = staleExecution.submit("stale candidate");
+    await Promise.resolve();
+
+    expect(staleSubmission.status).toBe("rejected");
+    expect(settler.emit()).toBeUndefined();
+    expect(currentSettlementObserved).toBe(false);
+
+    currentExecution.submit("current candidate");
+
+    expect(settler.emit()).toBe("current candidate");
+    await expect(currentSettlement).resolves.toEqual({
+      status: "settled",
+      revision: secondRevision,
+    });
+  });
+
+  it("linearizes submission and supersession into exactly two outcomes", () => {
+    for (const ordering of ["submit-first", "receive-first"] as const) {
+      const settler = createSettler<string, string>();
+      const revision = settler.receive("input");
+      const execution = settler.associateExecution(revision);
+
+      if (ordering === "submit-first") {
+        const submission = execution.submit("candidate");
+
+        expect(submission).toEqual({
+          status: "committed",
+          revision,
+          execution: execution.identity,
+        });
+        expect(settler.emit()).toBe("candidate");
+
+        settler.receive("newer input");
+        continue;
+      }
+
+      const supersedingRevision = settler.receive("newer input");
+      const submission = execution.submit("candidate");
+
+      expect(submission).toEqual({
+        status: "rejected",
+        reason: "superseded",
+        revision,
+        execution: execution.identity,
+        supersededBy: supersedingRevision,
+      });
+      expect(settler.emit()).toBeUndefined();
+    }
+  });
+});

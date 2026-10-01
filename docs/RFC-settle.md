@@ -234,10 +234,11 @@ revision. `require()` does not accept an executable callback or Promise.
 obligation represented by its own handle and never executes application work.
 Activity not registered as a required obligation does not block settlement.
 
-When later phases associate an obligation with a candidate result, satisfaction
-must be part of the same Settle-controlled atomic transition as candidate
-causal commit eligibility validation and observable commit. A host must not be
-able to use manual satisfaction to bypass that validation.
+Phase 5 associates an obligation with an execution by passing
+`{ requiredForSettlement: true }` to `associateExecution()`. Satisfaction is
+part of the same Settle-controlled atomic transition as candidate causal commit
+eligibility validation and observable commit. This associated obligation has
+no public manual-satisfaction handle, so the host cannot bypass validation.
 
 ## 3. Candidate results have execution and causal identity
 
@@ -847,7 +848,7 @@ glue code.
 
 # Proposed Public Surface
 
-The Phase 4 implementation currently exposes the following provisional public
+The Phase 5 implementation currently exposes the following provisional public
 surface:
 
 ```ts
@@ -855,6 +856,7 @@ export { createSettler } from "@signal-kernel/settle";
 
 export type {
   CandidateSubmissionOutcome,
+  ExecutionAssociationOptions,
   ExecutionIdentity,
   RequiredObligation,
   SettlementExecution,
@@ -869,7 +871,10 @@ Current usage:
 ```ts
 const settler = createSettler<Input, Candidate>();
 const revision = settler.receive(input);
-const execution = settler.associateExecution(revision);
+const execution = settler.associateExecution(revision, {
+  requiredForSettlement: true,
+});
+const settlement = settler.settle(revision);
 
 // The host, not Settle, performs application work.
 const candidate = await hostWork();
@@ -878,7 +883,7 @@ const candidate = await hostWork();
 const submission = execution.submit(candidate);
 const output = settler.emit();
 
-const outcome = await settler.settle(revision);
+const outcome = await settlement;
 ```
 
 Supersession is revision-scoped and permanently revokes older execution
@@ -904,14 +909,20 @@ available only through the revision-bound execution handle, and candidate
 payload is opaque to Settle. The returned submission outcome identifies both
 the execution and causal revision.
 
-The Phase 4 surface proves candidate provenance, revision-scoped settlement,
-and rejection of a candidate submitted after its revision has been superseded.
-It does not wait for or cancel the obsolete physical execution.
+`requiredForSettlement: true` creates an execution-associated obligation before
+settlement evaluation. Unlike a general manual obligation, this obligation
+does not expose `satisfy()` to the host. Only a causally eligible submission can
+satisfy it, as part of the same synchronous transition that makes the candidate
+observable. Rejected submission does not write observable state or run the
+obligation-satisfaction path. Without the option, execution association remains
+optional and does not block settlement.
 
-Phase 5 still needs to prove the complete atomic ordering contract between
-causal revision changes, observable commit, and candidate-associated
-obligations. The Phase 4 stale-result behavior does not by itself complete that
-contract.
+The Phase 5 surface closes the minimum atomic ordering contract between causal
+revision changes, observable commit, and execution-associated obligations.
+`receive()` and `submit()` are synchronous transitions through the same state:
+either submission commits first for its identified revision, or supersession
+wins and the stale candidate never becomes observable. No reusable commit
+authorization is exposed between validation and commit.
 
 The following longer-term lifecycle shape remains conceptual rather than an
 implemented API:
@@ -2100,10 +2111,10 @@ feature accumulation.
 
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Minimum execution-association and candidate-submission interface | Provisional | `associateExecution(revision)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. The Phase 3 shape remains in Phase 4; plain async plus at least two host integrations must validate it before it is frozen. |
-| Public commit-authority API          | Deferred                | Prefer one Settle-controlled causal-validation-and-commit transition; do not expose reusable authority that can outlive its causal revision.      |
+| Minimum execution-association and candidate-submission interface | Provisional | `associateExecution(revision, options?)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. The shape now supports an internal required execution obligation; host integrations must still validate it before it is frozen. |
+| Public commit-authority API          | Accepted for minimum core | `submit(candidate)` is the single Settle-controlled causal-validation-and-commit transition. The interface exposes no reusable authority that can outlive its causal revision. |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
-| Required-obligation declaration      | Accepted for Phase 2    | `require(revision)` returns an idempotent `satisfy()` handle. It records validity only, accepts no executable work, and must not bypass causal commit eligibility validation in later phases. |
+| Required-obligation declaration      | Accepted for minimum core | `require(revision)` returns an idempotent manual validity handle. `requiredForSettlement: true` instead creates an execution-associated obligation that exposes no manual satisfaction path and is satisfied atomically by eligible submission. |
 | Settlement outcome                   | Accepted                | A fulfilled `settle(revision)` reports `settled` or `superseded`; it never silently follows a newer revision.                                     |
 | Definition of settled                | Accepted                | The scoped revision remains authoritative, all accepted observable results remain causally eligible for it, and none of its required obligations remain unsatisfied. It does not certify domain correctness or quality. |
 | Application execution ownership      | Accepted                | The host performs all application work. Settle drives only validity propagation, invalidation, internal reactive recomputation, commit evaluation, and settlement evaluation. |

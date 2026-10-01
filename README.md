@@ -442,14 +442,17 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 4 surface is intentionally small:
+The implemented Phase 5 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
 
 const settler = createSettler<Input, Candidate>();
 const revision = settler.receive(input);
-const execution = settler.associateExecution(revision);
+const execution = settler.associateExecution(revision, {
+  requiredForSettlement: true,
+});
+const settlement = settler.settle(revision);
 
 // The host owns and performs any application work.
 const candidate = await hostWork();
@@ -458,7 +461,7 @@ const candidate = await hostWork();
 const submission = execution.submit(candidate);
 const output = settler.emit();
 
-const outcome = await settler.settle(revision);
+const outcome = await settlement;
 
 if (outcome.status === "settled") {
   // This revision has no unsatisfied required obligations.
@@ -497,13 +500,22 @@ the only current transition that exposes a completed candidate through
 `emit()`; Settle does not inspect candidate scores, confidence, or other domain
 content.
 
+Passing `{ requiredForSettlement: true }` registers an execution-associated
+obligation before settlement evaluation. It exposes no manual `satisfy()`
+operation: a causally eligible `submit(candidate)` commits the candidate and
+satisfies that obligation in the same synchronous state transition. A rejected
+submission does neither. Executions without this option remain optional and do
+not block settlement.
+
 Phase 4 permanently revokes an older execution's commit authority when a newer
 revision arrives. Its eventual physical completion does not delay the
 `superseded` outcome, and a late candidate cannot replace observable state.
 
-Phase 5 still needs to prove the complete atomic causal-validation-and-commit
-contract, including candidate-associated obligation behavior. That contract is
-not implied merely by the Phase 4 stale-result regression tests.
+Phase 5 closes the minimum causal-validation-and-commit contract. Submission
+and `receive()` share one synchronous ordering boundary: either the candidate
+commits first for its revision, or the newer revision wins and the stale
+candidate is rejected without becoming observable. The interface exposes no
+reusable commit authorization between validation and commit.
 
 The important part is what is **not** here.
 

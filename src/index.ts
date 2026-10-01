@@ -51,11 +51,37 @@ export type RequiredObligation = Readonly<{
   satisfy(): void;
 }>;
 
+export type ExecutionAssociationOptions = Readonly<{
+  requiredForSettlement?: boolean;
+}>;
+
+type RevisionState = {
+  supersededBy?: SettlementRevision;
+  unsatisfiedRequiredObligations: number;
+  settlementWaiters: Set<() => void>;
+};
+
+function wakeSettlementWaiters(state: RevisionState): void {
+  for (const settle of state.settlementWaiters) {
+    settle();
+  }
+  state.settlementWaiters.clear();
+}
+
+function satisfyRequiredObligation(state: RevisionState): void {
+  state.unsatisfiedRequiredObligations -= 1;
+
+  if (state.unsatisfiedRequiredObligations === 0) {
+    wakeSettlementWaiters(state);
+  }
+}
+
 export type Settler<Input, Candidate = never> = {
   receive(input: Input): SettlementRevision;
   require(revision: SettlementRevision): RequiredObligation;
   associateExecution<Revision extends SettlementRevision>(
     revision: Revision,
+    options?: ExecutionAssociationOptions,
   ): SettlementExecution<Candidate, Revision>;
   emit(): Candidate | undefined;
   settle<Revision extends SettlementRevision>(
@@ -69,14 +95,7 @@ export function createSettler<Input, Candidate = never>(): Settler<
 > {
   let committedCandidate: Candidate | undefined;
   let currentRevision: SettlementRevision | undefined;
-  const revisionStates = new WeakMap<
-    SettlementRevision,
-    {
-      supersededBy?: SettlementRevision;
-      unsatisfiedRequiredObligations: number;
-      settlementWaiters: Set<() => void>;
-    }
-  >();
+  const revisionStates = new WeakMap<SettlementRevision, RevisionState>();
 
   return {
     receive(input) {
@@ -92,11 +111,7 @@ export function createSettler<Input, Candidate = never>(): Settler<
       if (previousRevision !== undefined) {
         const previousState = revisionStates.get(previousRevision)!;
         previousState.supersededBy = revision;
-
-        for (const settle of previousState.settlementWaiters) {
-          settle();
-        }
-        previousState.settlementWaiters.clear();
+        wakeSettlementWaiters(previousState);
       }
 
       return revision;
@@ -112,25 +127,25 @@ export function createSettler<Input, Candidate = never>(): Settler<
             return;
           }
           isSatisfied = true;
-          state.unsatisfiedRequiredObligations -= 1;
-
-          if (state.unsatisfiedRequiredObligations === 0) {
-            for (const settle of state.settlementWaiters) {
-              settle();
-            }
-            state.settlementWaiters.clear();
-          }
+          satisfyRequiredObligation(state);
         },
       });
     },
-    associateExecution(revision) {
+    associateExecution(revision, options) {
       const identity = Object.freeze({}) as ExecutionIdentity;
+      const state = revisionStates.get(revision)!;
+      const isRequiredForSettlement =
+        options?.requiredForSettlement === true;
+      let isRequiredObligationSatisfied = !isRequiredForSettlement;
+
+      if (isRequiredForSettlement) {
+        state.unsatisfiedRequiredObligations += 1;
+      }
 
       return Object.freeze({
         identity,
         revision,
         submit(candidate) {
-          const state = revisionStates.get(revision)!;
           if (state.supersededBy !== undefined) {
             return Object.freeze({
               status: "rejected" as const,
@@ -142,6 +157,11 @@ export function createSettler<Input, Candidate = never>(): Settler<
           }
 
           committedCandidate = candidate;
+
+          if (!isRequiredObligationSatisfied) {
+            isRequiredObligationSatisfied = true;
+            satisfyRequiredObligation(state);
+          }
 
           return Object.freeze({
             status: "committed" as const,
