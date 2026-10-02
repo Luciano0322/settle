@@ -17,6 +17,15 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.11.0)
+      '@signal-kernel/async-runtime':
+        specifier: 0.4.1
+        version: 0.4.1
+      '@signal-kernel/core':
+        specifier: 0.1.5
+        version: 0.1.5
+      '@signal-kernel/snapshot':
+        specifier: 0.1.0
+        version: 0.1.0
       eslint:
         specifier: ^10.11.0
         version: 10.11.0
@@ -624,6 +633,15 @@ packages:
     resolution: {integrity: sha512-Erx822VRBwLa124shbj+wNXe//BOgMEctDV0m1aqTQdNO1S69DgNUCFKC1RCeZfixs1J31l6igk1ziyXErbigQ==}
     cpu: [x64]
     os: [win32]
+
+  '@signal-kernel/async-runtime@0.4.1':
+    resolution: {integrity: sha512-YAYLENQbTcE5iV2o/5XznWNkc9Yf/3yG8UOtLsMDHX5TIXzSPQHGg6iB3iGWypIJj6q5Kccp021h+qWm6TP2/A==}
+
+  '@signal-kernel/core@0.1.5':
+    resolution: {integrity: sha512-mRyzgw2IE1lYHdsWBUivaBymGJRv/N5mReQxp//XvbvuyST+7GMBp45BF6QBgoZ+7l4uRndpUt1hf58G+ydagA==}
+
+  '@signal-kernel/snapshot@0.1.0':
+    resolution: {integrity: sha512-ogH0RDWd+ZG+hFnRq4jC2JGwGVcGWl3fsEuYVfLVWpDhgyNp2PJ3vQgvYkRdP/OdCBFhut+XD2R/J9//HEkjsA==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1873,6 +1891,14 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.63.4':
     optional: true
+
+  '@signal-kernel/async-runtime@0.4.1':
+    dependencies:
+      '@signal-kernel/core': 0.1.5
+
+  '@signal-kernel/core@0.1.5': {}
+
+  '@signal-kernel/snapshot@0.1.0': {}
 
   '@types/chai@5.2.3':
     dependencies:

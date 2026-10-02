@@ -52,13 +52,20 @@
   "engines": {
     "node": ">=20"
   },
+  "peerDependencies": {
+    "@signal-kernel/async-runtime": "^0.4.1",
+    "@signal-kernel/core": "^0.1.5",
+    "@signal-kernel/snapshot": "^0.1.0"
+  },
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --sourcemap --clean",
-    "lint": "eslint src --max-warnings 0",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src tests --max-warnings 0",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "dependency:check": "node scripts/check-dependencies.mjs",
     "package:check": "publint",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm package:check",
+    "package:smoke": "node --input-type=module --eval \"await import('@signal-kernel/settle')\" && node --eval \"require('@signal-kernel/settle')\"",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm dependency:check && pnpm build && pnpm package:check && pnpm package:smoke",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "pnpm build && pnpm package:check && changeset publish"
@@ -68,6 +75,9 @@
     "@changesets/changelog-github": "^1.0.1",
     "@changesets/cli": "^3.0.3",
     "@eslint/js": "^10.0.1",
+    "@signal-kernel/async-runtime": "0.4.1",
+    "@signal-kernel/core": "0.1.5",
+    "@signal-kernel/snapshot": "0.1.0",
     "eslint": "^10.11.0",
     "publint": "^0.3.24",
     "tsup": "^8.5.1",
