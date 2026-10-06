@@ -10,10 +10,17 @@ being released merely because the release workflow runs.
 ## Pull request workflow
 
 1. Implement and verify one behavior slice.
-2. If the published package behavior changes, run `pnpm changeset`.
-3. Choose the pre-1.0 bump according to `.changeset/README.md`.
+2. Decide whether the slice is complete and intentionally part of the next
+   package release.
+3. For a releasable package change, run `pnpm changeset` and choose the pre-1.0
+   bump according to `.changeset/README.md`.
 4. Commit the generated `.changeset/*.md` file with the implementation.
 5. Open a pull request and wait for CI on Node 22 and Node 24.
+
+Before the first experimental release, Phase 0 through Phase 4 are incubation
+work and are recorded by commits and pull requests rather than active package
+changesets. Add the first `minor` changeset after the Phase 5 minimum core proves
+all four normative validity contracts and is ready to be proposed as `0.1.0`.
 
 Documentation, tests, and repository-only infrastructure do not require a
 release changeset. `pnpm changeset --empty` remains available if the repository

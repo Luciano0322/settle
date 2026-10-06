@@ -10,11 +10,11 @@ An execution may finish successfully after the state that created it has already
 changed.
 
 When that happens, the execution is complete — but its result may no longer be
-valid.
+causally eligible to affect observable state.
 
-Settle tracks causal state, execution identity, supersession, commit validity,
-reuse, and settlement so obsolete results cannot become current observable
-state.
+Settle tracks causal state, execution identity, supersession, causal commit
+eligibility, reuse, and settlement so obsolete results cannot become current
+observable state.
 
 Published as:
 
@@ -105,7 +105,7 @@ Execution completion answers:
 
 > Did the operation finish?
 
-Commit validity answers:
+Causal commit eligibility answers:
 
 > Is its result still allowed to affect current state?
 
@@ -126,9 +126,10 @@ It answers questions such as:
 * Which causal state created this execution?
 * Is this execution still current?
 * Has it been superseded?
-* May this result commit?
+* Does this application-submitted result still have authority to commit?
 * Can an existing settled result still be reused?
-* Which work must be recomputed?
+* Which accepted results have been invalidated?
+* Which required validity obligations remain unsatisfied?
 * Has the current observable state settled?
 
 Its core semantic vocabulary includes:
@@ -139,7 +140,7 @@ revision
 execution identity
 invalidation
 supersession
-commit validity
+causal commit eligibility
 selective reuse
 recomputation
 settlement
@@ -154,6 +155,8 @@ Settle is **not a workflow engine**.
 
 It does not decide:
 
+* which candidate is better, correct, or worth submitting
+* how to interpret a domain score or model confidence
 * what task runs next
 * how workflow nodes connect
 * when a task should retry
@@ -177,8 +180,9 @@ Settle is not:
 
 Your existing execution host still decides what runs and when.
 
-> **Your workflow engine decides what runs.
-> Settle decides whether the result still counts.**
+> **Your application decides what is acceptable.
+> Your execution host decides what runs.
+> Settle decides whether a submitted result still counts.**
 
 ---
 
@@ -253,8 +257,12 @@ Settle uses a stronger meaning.
 
 A system is settled when:
 
-> **All accepted observable results are valid for the current causal state, and
-> no required current work remains capable of changing that observable state.**
+> **All accepted observable results remain causally eligible for the current
+> causal state, and no required validity obligation remains unsatisfied or
+> capable of changing that observable state.**
+
+Settlement does not certify that those results are factually correct, optimal,
+or high quality. Domain acceptance remains application-owned.
 
 That does not require every physical operation to stop.
 
@@ -324,9 +332,9 @@ resource management
 while:
 
 ```text
-commit validation
+causal commit validation
     =
-correctness
+stale-result correctness
 ```
 
 ---
@@ -380,7 +388,7 @@ Each execution may carry enough causal information to determine:
 * what state created it
 * whether it remains current
 * whether another execution superseded it
-* whether its result may commit
+* whether an application-submitted result retains causal commit eligibility
 * how it appears in traces
 
 Execution identity is a correctness concept.
@@ -405,7 +413,7 @@ performs work
 produces candidate result
       |
       v
-validate current authority
+validate current causal authority
       |
   ┌───┴─────────┐
   │             │
@@ -422,7 +430,7 @@ An execution may lose commit authority because of:
 * explicit invalidation
 * runtime disposal
 * restore boundaries
-* application-defined validity policy
+* application-declared causal invalidation
 
 The public API for commit authority is still experimental.
 
@@ -434,34 +442,119 @@ The invariant is not.
 
 The final API is not frozen.
 
-The intended direction is intentionally small:
+The implemented Phase 6 surface is intentionally small:
 
 ```ts
-import {
-  defineSettlement,
-  createSettler,
-} from "@signal-kernel/settle";
+import { createSettler } from "@signal-kernel/settle";
 
-const definition = defineSettlement<Input, Output>((context) => {
-  return {
-    receive(input) {
-      // Application owns how input is interpreted.
-    },
+const settler = createSettler<Input, Candidate>();
+const revision = settler.receive(input);
+const execution = settler.associateExecution(revision, {
+  requiredForSettlement: true,
+});
+const settlement = settler.settle(revision);
 
-    readOutput() {
-      // Return the current valid output.
-    },
-  };
+// The host owns and performs any application work.
+const candidate = await hostWork();
+
+// Completion alone changes no observable Settle state.
+const submission = execution.submit(candidate);
+const output = settler.emit();
+
+const outcome = await settlement;
+
+if (outcome.status === "settled") {
+  // This revision has no unsatisfied required obligations.
+}
+```
+
+Reactive resources add selective invalidation without transferring execution
+ownership to Settle:
+
+```ts
+const settler = createSettler<State>();
+
+const b = settler.resource({
+  input: (state) => state.a,
+  run: async (input, context) => hostWork(input, context.signal),
 });
 
-const settler = createSettler(definition);
+const revision = settler.receive(state);
 
-settler.receive(input);
+if (b.required(revision)) {
+  // The host explicitly decides to start this application work.
+  await b.run(revision);
+}
 
-await settler.settle();
-
-const output = settler.emit();
+const outcome = await settler.settle(revision);
+const output = b.emit();
 ```
+
+`resource()` uses signal-kernel dependency tracking and a manual
+`@signal-kernel/async-runtime` resource. `receive()` only evaluates reactive
+validity; it never calls the descriptor's `run` callback. A changed selected
+input creates one revision-scoped obligation. An unchanged selected input
+reuses its committed output without host execution.
+
+While a resource is invalid, `emit()` does not expose its previous result.
+That validity state is reactive, so dependent resource selectors are also
+invalidated. A successful host-started `run(revision)` atomically validates the
+revision, exposes the new result, propagates downstream validity, and satisfies
+the corresponding obligation. A late result from a superseded revision cannot
+become observable.
+
+Settlement remains scoped to the selected revision:
+
+```ts
+const firstRevision = settler.receive(firstInput);
+const firstExecution = settler.associateExecution(firstRevision);
+settler.require(firstRevision);
+const firstSettlement = settler.settle(firstRevision);
+
+const secondRevision = settler.receive(secondInput);
+
+await firstSettlement;
+// { status: "superseded", revision: firstRevision, supersededBy: secondRevision }
+
+firstExecution.submit(lateCandidate);
+// { status: "rejected", reason: "superseded", ... }
+```
+
+The revision representation is opaque. Callers pass the identity returned by
+`receive()` back to revision-scoped operations rather than inspecting it.
+
+`require()` records a validity condition before settlement evaluation. The
+returned handle's `satisfy()` operation is idempotent and only reports that the
+condition now holds; it does not contain or invoke application work. Activity
+that is not registered as required does not block settlement.
+
+`associateExecution(revision)` creates a distinct opaque execution identity
+bound to that revision. Candidate submission exists only on this association,
+so callers do not assemble or repeat provenance fields. `submit(candidate)` is
+the only current transition that exposes a completed candidate through
+`emit()`; Settle does not inspect candidate scores, confidence, or other domain
+content.
+
+Passing `{ requiredForSettlement: true }` registers an execution-associated
+obligation before settlement evaluation. It exposes no manual `satisfy()`
+operation: a causally eligible `submit(candidate)` commits the candidate and
+satisfies that obligation in the same synchronous state transition. A rejected
+submission does neither. Executions without this option remain optional and do
+not block settlement.
+
+Phase 4 permanently revokes an older execution's commit authority when a newer
+revision arrives. Its eventual physical completion does not delay the
+`superseded` outcome, and a late candidate cannot replace observable state.
+
+Phase 5 closes the minimum causal-validation-and-commit contract. Submission
+and `receive()` share one synchronous ordering boundary: either the candidate
+commits first for its revision, or the newer revision wins and the stale
+candidate is rejected without becoming observable. The interface exposes no
+reusable commit authorization between validation and commit.
+
+Phase 6 preserves fine-grained reactive reuse. Settle identifies which
+resources require current results and keeps settlement pending; the host still
+chooses whether and when to call each required resource's `run(revision)`.
 
 The important part is what is **not** here.
 
@@ -481,15 +574,15 @@ Those are orchestration concerns.
 
 ---
 
-## Conceptual lifecycle
+## Planned lifecycle
 
 A Settle instance may eventually expose a lifecycle similar to:
 
 ```ts
-type Settler<Input, Output, SnapshotState> = {
-  receive(input: Input): void;
+type Settler<Input, Output, SnapshotState, Revision> = {
+  receive(input: Input): Revision;
 
-  settle(): Promise<void>;
+  settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
 
   emit(): Output;
 
@@ -1065,9 +1158,11 @@ other execution hosts, then Settle is doing its job.
 
 ## Development and releases
 
-The repository uses pnpm, GitHub Actions, and Changesets. Consumer-visible
-changes should include a changeset so version and changelog updates remain part
-of the reviewable history.
+The repository uses pnpm, GitHub Actions, and Changesets. Releasable
+consumer-visible changes should include a changeset so version and changelog
+updates remain part of the reviewable history. Incomplete pre-release behavior
+slices remain recorded by commits and pull requests until the minimum core is
+ready for `0.1.0`.
 
 See [TDD checklist](./docs/TDD-checklist.md) for implementation order and
 [release process](./docs/RELEASING.md) for CI, Changesets, and npm publishing.
