@@ -1,6 +1,6 @@
 {
   "name": "@signal-kernel/settle",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Execution validity for changing reactive systems.",
   "type": "module",
   "author": "Luciano Lee",
