@@ -848,11 +848,15 @@ glue code.
 
 # Proposed Public Surface
 
-The Phase 6 implementation currently exposes the following provisional public
+The Phase 7 implementation currently exposes the following provisional public
 surface:
 
 ```ts
-export { createSettler } from "@signal-kernel/settle";
+export {
+  createSettler,
+  SettlerDisposedError,
+  SettlementExecutionError,
+} from "@signal-kernel/settle";
 
 export type {
   CandidateSubmissionOutcome,
@@ -966,8 +970,9 @@ scheduler. `required(revision)` reports a validity requirement;
 currently valid committed resource result. Settle never automatically invokes
 the application callback.
 
-The following longer-term lifecycle shape remains conceptual rather than an
-implemented API:
+The inspection, snapshot, trace, and subscription methods in the longer-term
+lifecycle below remain conceptual. The `receive`, `settle`, `emit`, and
+`dispose` operations are implemented.
 
 Conceptually, the settlement result distinguishes the two successful lifecycle
 outcomes:
@@ -1298,35 +1303,83 @@ completion.
 
 # Error Semantics
 
-V1 propagates failures but does not automatically retry.
+V1 propagates relevant failures and never automatically retries. A fulfilled
+settlement Promise still has only the `settled` and `superseded` outcomes;
+operational rejection is not a third successful settlement outcome.
 
-A fulfilled settlement Promise has only the `settled` and `superseded`
-outcomes. A relevant operational failure may reject the Promise; it is not a
-third successful settlement outcome.
+Phase 7 defines a current required resource failure as an execution failure
+whose revision remains authoritative, whose selected input remains current,
+and whose attempt is still relevant under async-runtime's lifecycle. Settle
+checks those conditions when it observes asynchronous completion. Both
+synchronous throws and Promise rejections from the descriptor are supported.
 
-Failure relevance depends on causal validity.
+Such a failure rejects `resource.run(revision)` and waiting settlement
+operations with the same `SettlementExecutionError`. It identifies `revision`
+and `execution` and preserves the application's original thrown value in
+`cause`. Candidate and error payloads remain opaque. Failure does not satisfy
+the required obligation or expose a candidate. New settlement calls continue
+to reject while a relevant recorded resource failure remains.
 
-Example:
+The host may explicitly retry by calling `resource.run(revision)`. Starting
+that attempt clears only that resource's recorded failure. A new settlement
+operation may then wait for it; successful commit satisfies the obligation.
+Failures belonging to other required resources remain in effect. Previously
+rejected settlement operations are not revived. A recorded failure also loses
+relevance if its selected input changes or its committed result becomes
+reusable during internal validity propagation.
 
-```txt
-execution A#1 fails
-```
+Ordering is based on transitions observed by Settle:
 
-If A#1 was already superseded, that failure does not necessarily invalidate
-current settlement. Once the scoped revision is superseded, a late failure from
-its obsolete execution cannot replace the settlement operation's
-`superseded` outcome.
+* If supersession is observed first, the scoped operation fulfills as
+  `superseded`. A late failure from obsolete work cannot replace that result.
+* If a relevant failure is reported first, affected settlement Promises reject
+  and keep that result through subsequent supersession, retry, or disposal.
+  A new settlement call for the subsequently superseded revision reports
+  `superseded`.
+* A host Promise that rejected but whose failure has not yet been observed by
+  Settle does not take precedence over an intervening `receive()`.
+* Failures from an attempt replaced within the same revision, or from a
+  resource input that is no longer current, do not reject current settlement.
 
-The runtime should distinguish:
+The `associateExecution` handle still represents externally performed work.
+The host handles execution errors outside that seam; it does not receive a
+new Settle-owned retry or failure-reporting mechanism in Phase 7.
 
-```txt
-current failure
-obsolete failure
-```
+---
 
-where necessary.
+# Disposal And Cancellation
 
-Typed error semantics remain subject to black-box validation.
+`settler.dispose()` is synchronous and idempotent. It permanently revokes
+commit authority before any host cancellation callback can run, rejects
+pending settlement operations with `SettlerDisposedError`, requests
+cancellation through async-runtime, and disposes owned reactive selectors.
+It does not wait for application work to physically finish.
+
+Candidate submission and pending resource completion after disposal report
+`{ status: "rejected", reason: "disposed", revision, execution }` without
+writing observable state or satisfying obligations. This remains true when
+the host ignores cancellation or later rejects instead of producing a result.
+Existing committed values and validity flags remain readable after disposal;
+disposal does not fabricate a new accepted result.
+
+New calls to `receive`, `require`, `associateExecution`, and `resource` throw
+`SettlerDisposedError`. New resource `run` calls reject with that error.
+New settlement calls for an already superseded revision still report its
+`superseded` outcome. New calls for the disposed authoritative revision reject,
+including when an earlier settlement operation fulfilled as `settled`.
+Previously fulfilled or rejected Promises retain their terminal result.
+
+On supersession, Settle requests cancellation of the predecessor revision's
+resource execution through the existing manual async-runtime resource.
+Cancellation remains best-effort resource management: supersession, disposal,
+and stale-result rejection do not depend on physical cancellation succeeding.
+A host request to run superseded required work is rejected before application
+execution starts, so it cannot cancel the current resource execution.
+
+`resource.run` may return `undefined` when no result is required, an attempt is
+replaced within the same revision by async-runtime, or the selected input has
+changed before completion validation. These are not successful commits and do
+not satisfy a currently unsatisfied obligation.
 
 ---
 
@@ -2154,7 +2207,7 @@ feature accumulation.
 | Question                             | Disposition             | Decision or exit criterion                                                                                                                       |
 | ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Minimum execution-association and candidate-submission interface | Provisional | `associateExecution(revision, options?)` returns a revision-bound handle whose `submit(candidate)` operation supplies provenance. The shape now supports an internal required execution obligation; host integrations must still validate it before it is frozen. |
-| Public commit-authority API          | Accepted for minimum core | `submit(candidate)` is the single Settle-controlled causal-validation-and-commit transition. The interface exposes no reusable authority that can outlive its causal revision. |
+| Public commit-authority API          | Accepted for minimum core | Manual `submit(candidate)` and resource completion each perform one Settle-controlled causal-validation-and-commit transition. The interface exposes no reusable authority that can outlive its causal revision. |
 | Causal revision representation       | Deferred                | Must support deterministic and serialized hosts without forcing one application input model.                                                     |
 | Required-obligation declaration      | Accepted for minimum core | `require(revision)` returns an idempotent manual validity handle. `requiredForSettlement: true` instead creates an execution-associated obligation that exposes no manual satisfaction path and is satisfied atomically by eligible submission. |
 | Settlement outcome                   | Accepted                | A fulfilled `settle(revision)` reports `settled` or `superseded`; it never silently follows a newer revision.                                     |
@@ -2166,7 +2219,7 @@ feature accumulation.
 | Reactive resource interface          | Accepted for Phase 6    | `resource({ input, run })` returns only `required(revision)`, host-driven `run(revision)`, and validity-guarded `emit()`. It preserves selective invalidation without becoming a scheduler. |
 | Async-runtime alignment              | Accepted                | Reactive resources directly use the compatible async-runtime `0.4.1` manual-resource contract; the correction POC's `0.3.0` dependency is not the baseline. |
 | `emit()` after supersession           | Deferred                | Decide whether callers must use `inspect()` for the last stable output or whether `emit()` exposes only output settled for the authoritative revision. |
-| Operational error precedence         | Deferred                | Define rejection behavior for current failures and disposal while preserving `superseded` as the outcome once the scoped revision has been superseded. |
+| Operational error precedence         | Accepted for Phase 7    | Relevant required resource failures reject run and waiting settlement with `SettlementExecutionError`; explicit host retry can recover for a new settlement call. Already terminated Promises keep their result. Supersession observed before failure preserves `superseded`; disposal rejects pending authoritative settlement with `SettlerDisposedError`. |
 | Retry ownership                      | Accepted                | Host responsibility. Settle v1 performs no automatic retry.                                                                                      |
 | Cancellation requirement             | Rejected                | Supersession and commit validation guarantee correctness independently of physical cancellation.                                                 |
 | Process continuity                   | Rejected as requirement | Settle must support serialized continuity through compatible snapshots.                                                                          |

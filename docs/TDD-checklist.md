@@ -71,8 +71,9 @@ Application 決定什麼結果具有 domain acceptance，host 決定提交什麼
 將 candidate payload 視為 opaque data，不進行 ranking、scoring、quality
 judgment，也不從 model confidence 推導 commit authority。
 
-`submit()` 是唯一能讓 candidate 進入 observable state 的 Settle-controlled
-causal-validation-and-commit transition。
+手動 execution 透過 `submit()` 進入 Settle-controlled
+causal-validation-and-commit transition；Phase 6 resource 的 `run()` 完成後
+也必須經過同樣的原子驗證與提交。
 公開 interface 不應提供可在驗證後保留、並於未來才使用的 commit authority，
 否則會形成 RFC 所禁止的 check-then-commit race。
 
@@ -246,19 +247,33 @@ reactive validity conditions 尚未滿足，但是否以及如何執行 applicat
 
 ## Phase 7：error、dispose 與 cancellation
 
-已由 RFC 決定的部分：
+- [x] physical cancellation 失敗不影響 stale-result correctness。
+- [x] superseded execution 的 late rejection 不會把 `superseded` 改成 operational failure。
+- [x] `dispose()` 永久撤銷所有 pending execution 的 commit authority。
+- [x] dispose 後的 candidate 不可寫入 observable state。
+- [x] dispose 是 idempotent。
+- [x] current revision 的 required resource execution failure 以
+      `SettlementExecutionError` reject `run()` 與正在等待的 `settle(revision)`，
+      保留原始 `cause`、execution identity 與 causal revision。
+- [x] failure 不滿足 obligation，也不自動 retry；host 明確 retry 成功後，
+      新的 settlement operation 才可 settled，已 rejected Promise 不會復活。
+- [x] execution failure 與 receive N+1 以 Settle 觀察到的 transition 順序決定；
+      尚未被觀察的 Promise rejection 不會推翻已發生的 supersession。
+- [x] disposal reject 尚在等待的 settlement；已 fulfilled/rejected Promise
+      維持原結果。dispose 後的新 `settle()` 對 superseded revision 仍回報
+      superseded，對 authoritative revision 則 reject `SettlerDisposedError`。
+- [x] disposed instance 不接受新 input、obligation、execution、resource 或 run。
+- [x] cancellation 通知之前先撤銷 authority，避免 host callback reentrancy 提交。
+- [x] superseded revision 的 `run()` 不呼叫 application work 或取消目前 execution。
+- [x] 同 revision 被新 attempt 取代或 input 已改變的 late failure，不影響目前 settlement。
+- [x] 某一 resource retry 不清除其他 required resource 的 failure。
 
-- [ ] physical cancellation 失敗不影響 stale-result correctness。
-- [ ] superseded execution 的 late rejection 不會把 `superseded` 改成 operational failure。
-- [ ] `dispose()` 永久撤銷所有 pending execution 的 commit authority。
-- [ ] dispose 後的 candidate 不可寫入 observable state。
-- [ ] dispose 是 idempotent。
+### Phase 7 exit criterion
 
-下列項目要等 operational error precedence 定案後才進入 red–green：
-
-- [ ] 決定 current revision execution failure 是否立即 reject `settle(revision)`。
-- [ ] 決定 execution failure 與 receive N+1 競爭時的 precedence。
-- [ ] 決定 dispose 與已 settled/superseded settlement operation 的互動。
+錯誤、supersession 與 disposal 的先後順序已有 public-seam tests 保護；
+Settle 直接沿用 async-runtime 的 cancellation 與 current-attempt error 機制，
+host 仍擁有 execution 與 retry 決策。`settle()` 成功結果維持 settled/superseded，
+operational failure 透過 Promise rejection 表達。
 
 ## Phase 8：snapshot 與 restore
 
@@ -321,7 +336,6 @@ Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死�
 - execution-association 與 candidate-submission 的最終方法名稱及資料形狀。
 - causal revision 的具體表示方式。
 - supersession 後 `emit()` 的完整語義。
-- operational error、dispose 與 supersession 的 precedence。
 - 完整 trace taxonomy。
 - `/testing` public subpath。
 - 特定 host adapter package。

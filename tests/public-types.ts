@@ -1,4 +1,8 @@
-import { createSettler } from "@signal-kernel/settle";
+import {
+  createSettler,
+  type CandidateSubmissionOutcome,
+  type SettlementExecutionError,
+} from "@signal-kernel/settle";
 
 const settler = createSettler<string, string>();
 const revision = settler.receive("input");
@@ -30,6 +34,23 @@ const resourceHandleExposesOnlyHostDrivenBehavior: Expect<
 > = true;
 void resource;
 void resourceHandleExposesOnlyHostDrivenBehavior;
+
+const disposalIsSynchronous: Expect<
+  Equal<ReturnType<typeof settler.dispose>, void>
+> = true;
+const operationalErrorsDoNotAddSuccessfulOutcomes: Expect<
+  Equal<Awaited<ReturnType<typeof settler.settle>>["status"], "settled" | "superseded">
+> = true;
+const candidateRejectionsIncludeDisposal: Expect<
+  Equal<Extract<CandidateSubmissionOutcome, { status: "rejected" }>["reason"], "superseded" | "disposed">
+> = true;
+const executionErrorPreservesOpaqueCause: Expect<
+  Equal<SettlementExecutionError["cause"], unknown>
+> = true;
+void disposalIsSynchronous;
+void operationalErrorsDoNotAddSuccessfulOutcomes;
+void candidateRejectionsIncludeDisposal;
+void executionErrorPreservesOpaqueCause;
 
 // Candidate submission requires the revision-bound execution handle.
 // @ts-expect-error Settler intentionally has no direct submission operation.

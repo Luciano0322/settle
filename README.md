@@ -442,7 +442,7 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 6 surface is intentionally small:
+The implemented Phase 7 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
@@ -530,10 +530,11 @@ that is not registered as required does not block settlement.
 
 `associateExecution(revision)` creates a distinct opaque execution identity
 bound to that revision. Candidate submission exists only on this association,
-so callers do not assemble or repeat provenance fields. `submit(candidate)` is
-the only current transition that exposes a completed candidate through
-`emit()`; Settle does not inspect candidate scores, confidence, or other domain
-content.
+so callers do not assemble or repeat provenance fields. For externally
+performed work, `submit(candidate)` exposes the completed candidate through
+`settler.emit()`; resource completion follows the same causal validation and
+commit contract through its own handle. Settle does not inspect candidate
+scores, confidence, or other domain content.
 
 Passing `{ requiredForSettlement: true }` registers an execution-associated
 obligation before settlement evaluation. It exposes no manual `satisfy()`
@@ -571,6 +572,72 @@ retry(...)
 ```
 
 Those are orchestration concerns.
+
+---
+
+## Errors, cancellation, and disposal
+
+A current required resource failure rejects both its `run(revision)` Promise
+and waiting `settle(revision)` Promises with `SettlementExecutionError`. The
+error preserves the original `cause`, execution identity, and causal revision.
+The resource remains required and its failed candidate never becomes observable.
+
+Handle both Promises when starting work and waiting for settlement together:
+
+```ts
+import { SettlementExecutionError } from "@signal-kernel/settle";
+
+try {
+  await Promise.all([
+    resource.run(revision),
+    settler.settle(revision),
+  ]);
+} catch (error) {
+  if (!(error instanceof SettlementExecutionError)) throw error;
+  // The host decides whether to retry, use a fallback, or receive new input.
+}
+```
+
+Settle never retries automatically. An explicit host retry clears that
+resource's recorded failure when it starts. After a successful retry, a new
+`settle(revision)` call can fulfill; previously rejected Promises remain
+rejected. Other required resources and their failures remain independent.
+
+Failure relevance is checked when Settle observes execution completion. A
+superseded revision's late rejection cannot replace its `superseded` outcome.
+If failure was already reported before new input arrived, that rejected
+settlement Promise keeps its original error. Replaced attempts and results
+whose selected inputs changed within the same revision do not fail current
+settlement. A resource's recorded failure is also removed when its selected
+input changes or its committed result becomes reusable.
+
+`settler.dispose()` permanently revokes commit authority, rejects pending
+settlement with `SettlerDisposedError`, requests async-runtime cancellation,
+and releases internal reactive dependencies. Disposal is idempotent. Even if
+host work ignores cancellation, its late result cannot commit. An existing
+execution's submission or pending resource completion reports
+`{ status: "rejected", reason: "disposed", ... }` after disposal.
+
+After disposal, new `receive`, `require`, `associateExecution`, and `resource`
+calls throw `SettlerDisposedError`; new resource `run` calls reject with that
+error. Read operations retain the last committed state and validity flags.
+Already completed settlement Promises keep their results. New settlement
+calls for an already superseded revision still report `superseded`; calls for
+the disposed authoritative revision reject, even if an earlier operation
+settled it.
+
+Cancellation uses async-runtime's existing lifecycle and does not determine
+causal eligibility. A new revision requests cancellation of its predecessor's
+resource execution, but neither supersession nor disposal waits for physical
+completion. Calling `run` for superseded required work rejects its candidate
+authority without invoking application work. `run` returns `undefined` when
+no work is required or async-runtime replaces an attempt within the same
+revision; a result for a selected input that has since changed is also ignored.
+
+Externally performed work associated with `associateExecution` remains
+host-owned: the host handles its execution errors and explicitly submits
+accepted results. The handle does not introduce a separate failure-reporting
+or retry mechanism.
 
 ---
 
