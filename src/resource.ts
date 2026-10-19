@@ -3,6 +3,7 @@ import {
   type ResourceContext,
 } from "@signal-kernel/async-runtime";
 import { batch, computed, signal } from "@signal-kernel/core";
+import { isJsonValue } from "@signal-kernel/snapshot";
 
 import { SettlementExecutionError } from "./errors.js";
 import {
@@ -75,6 +76,42 @@ export function createSettlementResource<Input, ResourceInput, Candidate>(
   let runningRevision: SettlementRevision | undefined;
 
   const registration: ReactiveResourceRegistration = {
+    id: descriptor.id,
+    snapshot() {
+      const valid = hasCommittedCandidate && !currentRequirement.peek();
+      const candidate = committedCandidate.peek();
+      return {
+        id: descriptor.id!,
+        valid,
+        ...(valid && committedInput !== undefined ? { input: committedInput } : {}),
+        ...(valid && candidate !== undefined ? { candidate } : {}),
+      };
+    },
+    restore(state) {
+      hasCommittedCandidate = state.valid;
+      committedInput = state.input as ResourceInput | undefined;
+      committedCandidate.set(() => state.candidate as Candidate | undefined);
+      currentRequirement.set(!state.valid);
+    },
+    rebind() {
+      if (hasCommittedCandidate) {
+        const nextInput = selectedInput.get();
+        const sameTransferredValue =
+          descriptor.equals === undefined &&
+          isJsonValue(nextInput) &&
+          isJsonValue(committedInput) &&
+          JSON.stringify(nextInput) === JSON.stringify(committedInput);
+        if (
+          equality(nextInput, committedInput as ResourceInput) ||
+          sameTransferredValue
+        ) {
+          committedInput = nextInput;
+        } else {
+          hasCommittedCandidate = false;
+          currentRequirement.set(true);
+        }
+      }
+    },
     cancel(revision) {
       if (runningRevision === revision) {
         asyncResource.cancel("superseded");

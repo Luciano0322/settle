@@ -1,4 +1,5 @@
 import type { ResourceContext } from "@signal-kernel/async-runtime";
+import type { SnapshotDocument } from "@signal-kernel/snapshot";
 
 declare const settlementRevisionBrand: unique symbol;
 declare const executionIdentityBrand: unique symbol;
@@ -63,8 +64,26 @@ export type ExecutionAssociationOptions = Readonly<{
   requiredForSettlement?: boolean;
 }>;
 
+export type SettlerOptions = Readonly<{
+  definition?: Readonly<{ id: string; version: string }>;
+  now?: () => number;
+}>;
+
+export type SettlementSnapshot = SnapshotDocument;
+
+export type RestoredExecutionObligation<Candidate> = Readonly<{
+  associateExecution(): SettlementExecution<Candidate>;
+}>;
+
+export type RestoredSettlement<Candidate> = Readonly<{
+  revision: SettlementRevision;
+  manualObligations: readonly RequiredObligation[];
+  executionObligations: readonly RestoredExecutionObligation<Candidate>[];
+}>;
+
 export type SettlementResourceDescriptor<Input, ResourceInput, Candidate> =
   Readonly<{
+    id?: string;
     input(state: Input): ResourceInput;
     run(input: ResourceInput, context: ResourceContext): Promise<Candidate>;
     equals?: (left: ResourceInput, right: ResourceInput) => boolean;
@@ -79,6 +98,8 @@ export type SettlementResource<Candidate> = Readonly<{
 }>;
 
 export type Settler<Input, Candidate = never> = {
+  snapshot(): SettlementSnapshot;
+  restore(snapshot: unknown): RestoredSettlement<Candidate>;
   dispose(): void;
   receive(input: Input): SettlementRevision;
   resource<ResourceInput, ResourceCandidate>(

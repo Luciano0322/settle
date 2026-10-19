@@ -277,16 +277,32 @@ operational failure 透過 Promise rejection 表達。
 
 ## Phase 8：snapshot 與 restore
 
-- [ ] settled observable state 可以 snapshot 並 restore。
-- [ ] snapshot 不包含 live Promise、AbortController 或 execution object。
-- [ ] snapshot 時 unsatisfied required validity obligations 在 restore 後重建，
+- [x] settled observable state 可以 snapshot 並 restore。
+- [x] snapshot 不包含 live Promise、AbortController 或 execution object。
+- [x] snapshot 時 unsatisfied required validity obligations 在 restore 後重建，
       不序列化或推導 application work。
-- [ ] restore 不自行啟動 application execution。
-- [ ] restore 前 execution 的 late candidate 不能 commit 到 restored instance。
-- [ ] 由同一 snapshot restore 的兩個 instances 完全隔離。
-- [ ] 不相容 definition/schema 的 snapshot 被拒絕。
-- [ ] restored reusable result 不產生不必要的 validity obligation。
-- [ ] deterministic ID/clock 在 restore 後仍符合 replay host 的要求。
+- [x] restore 不自行啟動 application execution。
+- [x] restore 前 execution 的 late candidate 不能 commit 到 restored instance。
+- [x] 由同一 snapshot restore 的兩個 instances 完全隔離。
+- [x] 不相容 definition/schema 的 snapshot 被拒絕。
+- [x] restored reusable result 不產生不必要的 validity obligation。
+- [x] snapshot 的 definition/node/resource IDs 與可注入 clock 在 restore 後
+      可重現；live revision/execution identity 重新建立且彼此隔離。
+- [x] 手動 obligation 還原為新的 idempotent satisfy handle；required execution
+      obligation 只能透過新 execution 的有效 commit 滿足。
+- [x] selector 的外部依賴改變時，不 reuse 舊 causal input key 的結果。
+- [x] restore 尊重明確指定的 input comparator，預設以 JSON transfer key 重新綁定。
+- [x] 不同 resource 註冊順序下，downstream validity propagation 仍持續至穩定。
+- [x] malformed counts、缺少 state 或不符 resource ID 集合時，在初始化前拒絕。
+
+### Phase 8 exit criterion
+
+直接沿用 `@signal-kernel/snapshot` 的 capture/restore、JSON codec 與相容性檢查。
+Settle 只補 validity metadata、causal key 檢查與 obligation 重建；restore 僅能
+套用到已註冊相同 resources、但尚未 receive 的新 instance。
+
+固定 snapshot clock 與穩定 serialized identities 已驗證；這不等同於完成
+Temporal Workflow deterministic replay，host-specific replay 驗證仍屬 Phase 10。
 
 ## Phase 9：trace 與 inspection
 

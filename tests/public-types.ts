@@ -2,6 +2,8 @@ import {
   createSettler,
   type CandidateSubmissionOutcome,
   type SettlementExecutionError,
+  type RestoredExecutionObligation,
+  type SettlementSnapshot,
 } from "@signal-kernel/settle";
 
 const settler = createSettler<string, string>();
@@ -51,6 +53,23 @@ void disposalIsSynchronous;
 void operationalErrorsDoNotAddSuccessfulOutcomes;
 void candidateRejectionsIncludeDisposal;
 void executionErrorPreservesOpaqueCause;
+
+const snapshotReturnsTransferableDocument: Expect<
+  Equal<ReturnType<typeof settler.snapshot>, SettlementSnapshot>
+> = true;
+const restoreValidatesUntrustedDocuments: Expect<
+  Equal<Parameters<typeof settler.restore>[0], unknown>
+> = true;
+const restoredExecutionHasNoManualSatisfaction: Expect<
+  Equal<keyof RestoredExecutionObligation<string>, "associateExecution">
+> = true;
+const restoredExecutionRetainsCandidateType: Expect<
+  Equal<Parameters<ReturnType<RestoredExecutionObligation<string>["associateExecution"]>["submit"]>[0], string>
+> = true;
+void snapshotReturnsTransferableDocument;
+void restoreValidatesUntrustedDocuments;
+void restoredExecutionHasNoManualSatisfaction;
+void restoredExecutionRetainsCandidateType;
 
 // Candidate submission requires the revision-bound execution handle.
 // @ts-expect-error Settler intentionally has no direct submission operation.

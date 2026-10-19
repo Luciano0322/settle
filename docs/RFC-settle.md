@@ -848,7 +848,7 @@ glue code.
 
 # Proposed Public Surface
 
-The Phase 7 implementation currently exposes the following provisional public
+The Phase 8 implementation currently exposes the following provisional public
 surface:
 
 ```ts
@@ -856,6 +856,7 @@ export {
   createSettler,
   SettlerDisposedError,
   SettlementExecutionError,
+  SettlementSnapshotError,
 } from "@signal-kernel/settle";
 
 export type {
@@ -863,12 +864,16 @@ export type {
   ExecutionAssociationOptions,
   ExecutionIdentity,
   RequiredObligation,
+  RestoredExecutionObligation,
+  RestoredSettlement,
   SettlementExecution,
   SettlementResource,
   SettlementResourceDescriptor,
   SettlementRevision,
+  SettlementSnapshot,
   SettlementOutcome,
   Settler,
+  SettlerOptions,
 } from "@signal-kernel/settle";
 ```
 
@@ -970,9 +975,9 @@ scheduler. `required(revision)` reports a validity requirement;
 currently valid committed resource result. Settle never automatically invokes
 the application callback.
 
-The inspection, snapshot, trace, and subscription methods in the longer-term
+The inspection, trace, and subscription methods in the longer-term
 lifecycle below remain conceptual. The `receive`, `settle`, `emit`, and
-`dispose` operations are implemented.
+`dispose` operations, together with Phase 8 snapshot and restore, are implemented.
 
 Conceptually, the settlement result distinguishes the two successful lifecycle
 outcomes:
@@ -998,7 +1003,7 @@ that revision.
 Conceptual lifecycle interface:
 
 ```ts
-type Settler<Input, Output, SnapshotState, Revision> = {
+type Settler<Input, Output, Revision> = {
   receive(input: Input): Revision;
 
   settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
@@ -1007,7 +1012,9 @@ type Settler<Input, Output, SnapshotState, Revision> = {
 
   inspect(): SettlementInspection<Output>;
 
-  snapshot(): SettlementSnapshot<SnapshotState>;
+  snapshot(): SettlementSnapshot;
+
+  restore(snapshot: unknown): RestoredSettlement<Output>;
 
   trace(): readonly SettlementTraceEvent[];
 
@@ -1421,6 +1428,84 @@ Settle instance B
 ```
 
 A and B never share live state.
+
+## Phase 8 public interface
+
+```ts
+const options = { definition: { id: "session", version: "1" }, now: hostClock };
+const source = createSettler<Input, Candidate>(options);
+const result = source.resource({ id: "result", input: selectInput, run: hostWork });
+
+const revision = source.receive(input);
+await result.run(revision);
+const snapshot = source.snapshot();
+
+const target = createSettler<Input, Candidate>(options);
+const restoredResult = target.resource({ id: "result", input: selectInput, run: hostWork });
+const restored = target.restore(snapshot);
+// { revision, manualObligations, executionObligations }
+```
+
+Snapshot operations require an explicit settlement definition ID and version.
+Every registered resource must have a non-empty unique ID. Restore is allowed
+only on a live fresh target that has not received input; it does not reset an
+active instance. The target must register the same resource ID set before
+restoring. Resource IDs determine identity independently of registration order.
+The application changes the definition version whenever selector or validity
+semantics change incompatibly; no code hashing or migration registry is implied.
+
+`SettlementSnapshot` is the native signal-kernel `SnapshotDocument`. Settle
+uses the snapshot package's capture, strict graph compatibility checks, JSON
+validation, and codec directly. Its `settle.state.v1` signal node contains a
+versioned Settle payload with authoritative input, eligible manual output,
+resource validity and causal input keys, reusable resource values, and counts
+of unsatisfied manual and execution-associated obligations. It contains no
+live asynchronous work, error objects, execution identities, or application
+callbacks. JSON transfer copies isolate the source, the document, and each
+restored instance.
+
+Only eligible committed state is reusable. An invalid resource's old result
+is omitted, as is manual output belonging to a superseded revision. A failed
+resource is reconstructed as an unsatisfied condition without carrying its
+source instance's operational error. Optional external execution is not
+reconstructed as a required obligation.
+
+Restore checks resource causal input keys against current selectors before
+reusing values, including selectors that read dependencies outside `Input`.
+With default equality, JSON transfer equality is used to rebind a reusable
+input to its new live selector value; an explicit `equals` comparator takes
+precedence. Default transfer equality compares serialized JSON values.
+Application payloads and reusable selector keys must be JSON-compatible.
+Selectors and comparators are pure internal validity computations.
+
+All resource values are seeded before their input bindings are restored.
+Validity then propagates to a fixed point before settlement evaluation. This
+also handles downstream resources registered before their dependencies and
+does not invoke any application executor.
+
+Unsatisfied manual conditions become new idempotent handles in
+`restored.manualObligations`. Unsatisfied execution-associated conditions
+become `restored.executionObligations`; each exposes only
+`associateExecution()`, which idempotently returns a newly identified execution
+bound to the restored revision. Claiming an execution obligation does not
+satisfy it or duplicate it. A successful candidate commit satisfies it
+atomically. No manual satisfaction authority is exposed for that obligation.
+The host decides what each restored condition means and performs all work.
+
+`restore` validates unknown transfer input. Malformed Settle payloads, missing
+state, invalid obligation counts, and incompatible schema, definition, version,
+or resource sets throw `SettlementSnapshotError` before initializing the
+target. Snapshot capture rejects live or non-JSON application payloads with the
+same error type. Snapshot lifecycle calls on disposed instances retain the
+Phase 7 `SettlerDisposedError` contract.
+
+Capture does not dispose or revoke the source instance. A source execution may
+still complete for its source revision, but has no authority in any restored
+instance. Restored revisions and executions are fresh opaque identities. The
+optional `now` clock is passed directly to the snapshot scope; stable
+definition/node/resource IDs and injected timestamps make serialized state
+reproducible. Temporal-specific execution replay guarantees remain subject to
+Phase 10 validation.
 
 Restore does not execute omitted application work. It reconstructs enough
 validity state for Settle to report which obligations remain unsatisfied. The
@@ -2225,6 +2310,7 @@ feature accumulation.
 | Process continuity                   | Rejected as requirement | Settle must support serialized continuity through compatible snapshots.                                                                          |
 | Deterministic clock and IDs          | Accepted                | Injectable or deterministically derived where required.                                                                                          |
 | Snapshot migration registry          | Rejected for `0.1.0`    | Matching settlement definition and schema required.                                                                                              |
+| Snapshot and restore interface       | Accepted for Phase 8    | `snapshot()` returns a native signal-kernel SnapshotDocument; fresh instances with matching definition and resource IDs may `restore(document)` and receive a new revision plus manual and execution obligation handles. Restore never executes application work. |
 | Trace taxonomy                       | Deferred                | Freeze after generic, LangGraph, Inngest, and Temporal validation.                                                                               |
 | LangGraph adapter package            | Deferred                | Example first. Package only if meaningful repeated glue emerges.                                                                                 |
 | Inngest adapter package              | Deferred                | Example first.                                                                                                                                   |

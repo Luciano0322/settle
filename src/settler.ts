@@ -1,7 +1,8 @@
 import { batch, signal } from "@signal-kernel/core";
 
-import { SettlerDisposedError } from "./errors.js";
+import { SettlerDisposedError, SettlementSnapshotError } from "./errors.js";
 import { createSettlementResource } from "./resource.js";
+import { captureSettlementSnapshot, readSettlementSnapshot } from "./snapshot.js";
 import {
   satisfyRequiredObligation,
   wakeSettlementWaiters,
@@ -10,19 +11,23 @@ import {
 } from "./settlement-state.js";
 import type {
   ExecutionIdentity,
+  RequiredObligation,
+  RestoredExecutionObligation,
+  SettlementExecution,
   SettlementOutcome,
   SettlementResource,
   SettlementResourceDescriptor,
   SettlementRevision,
   Settler,
+  SettlerOptions,
 } from "./types.js";
 
-export function createSettler<Input, Candidate = never>(): Settler<
-  Input,
-  Candidate
-> {
+export function createSettler<Input, Candidate = never>(
+  options: SettlerOptions = {},
+): Settler<Input, Candidate> {
   let isDisposed = false;
   let committedCandidate: Candidate | undefined;
+  let committedRevision: SettlementRevision | undefined;
   let currentRevision: SettlementRevision | undefined;
   const currentInput = signal<Input | undefined>(undefined);
   const revisionStates = new WeakMap<SettlementRevision, RevisionState>();
@@ -37,9 +42,18 @@ export function createSettler<Input, Candidate = never>(): Settler<
   function evaluateReactiveResources(revision: SettlementRevision): void {
     const state = revisionStates.get(revision)!;
     let obligationChange = 0;
-
-    for (const resource of reactiveResources) {
-      obligationChange += resource.evaluate(revision);
+    let changed = true;
+    let passes = 0;
+    while (changed) {
+      if (++passes > 10000) {
+        throw new Error("Reactive validity did not stabilize");
+      }
+      changed = false;
+      for (const resource of reactiveResources) {
+        const change = resource.evaluate(revision);
+        obligationChange += change;
+        if (change !== 0) changed = true;
+      }
     }
 
     state.unsatisfiedRequiredObligations += obligationChange;
@@ -48,7 +62,85 @@ export function createSettler<Input, Candidate = never>(): Settler<
     }
   }
 
-  return {
+  const settler: Settler<Input, Candidate> = {
+    snapshot() {
+      assertActive();
+      if (currentRevision === undefined) {
+        throw new SettlementSnapshotError(
+          "Receive input before capturing a snapshot",
+        );
+      }
+      const state = revisionStates.get(currentRevision)!;
+      const input = currentInput.peek();
+      return captureSettlementSnapshot(options, {
+        manualObligations: state.unsatisfiedManualObligations,
+        executionObligations: state.unsatisfiedExecutionObligations,
+        ...(input !== undefined ? { input } : {}),
+        ...(committedRevision === currentRevision && committedCandidate !== undefined
+          ? { candidate: committedCandidate }
+          : {}),
+        resources: reactiveResources.map((resource) => resource.snapshot()),
+      });
+    },
+    restore(snapshot) {
+      assertActive();
+      if (currentRevision !== undefined) {
+        throw new SettlementSnapshotError("Restore requires a fresh settler");
+      }
+      const state = readSettlementSnapshot<Input, Candidate>(
+        options,
+        snapshot,
+        reactiveResources.map((resource) => resource.id),
+      );
+      const restoredResources = new Map(
+        state.resources.map((resource) => [resource.id, resource]),
+      );
+      let revision!: SettlementRevision;
+      const manualObligations: RequiredObligation[] = [];
+      const executionObligations: RestoredExecutionObligation<Candidate>[] = [];
+      batch(() => {
+        revision = settler.receive(state.input as Input);
+        committedCandidate = state.candidate;
+        committedRevision = revision;
+        for (const resource of reactiveResources) {
+          resource.restore(restoredResources.get(resource.id!)!);
+        }
+        for (const resource of reactiveResources) {
+          resource.rebind();
+        }
+        for (let index = 0; index < state.manualObligations; index += 1) {
+          manualObligations.push(settler.require(revision));
+        }
+        const restoredState = revisionStates.get(revision)!;
+        restoredState.unsatisfiedRequiredObligations += state.executionObligations;
+        restoredState.unsatisfiedExecutionObligations += state.executionObligations;
+        for (let index = 0; index < state.executionObligations; index += 1) {
+          let execution: SettlementExecution<Candidate> | undefined;
+          executionObligations.push(
+            Object.freeze({
+              associateExecution() {
+                assertActive();
+                if (execution === undefined) {
+                  execution = settler.associateExecution(revision, {
+                    requiredForSettlement: true,
+                  });
+                  // Transfer the reservation without waking settlement.
+                  restoredState.unsatisfiedRequiredObligations -= 1;
+                  restoredState.unsatisfiedExecutionObligations -= 1;
+                }
+                return execution;
+              },
+            }),
+          );
+        }
+        evaluateReactiveResources(revision);
+      });
+      return Object.freeze({
+        revision,
+        manualObligations: Object.freeze(manualObligations),
+        executionObligations: Object.freeze(executionObligations),
+      });
+    },
     dispose() {
       if (isDisposed) {
         return;
@@ -67,6 +159,8 @@ export function createSettler<Input, Candidate = never>(): Settler<
       const revision = Object.freeze({}) as SettlementRevision;
       revisionStates.set(revision, {
         unsatisfiedRequiredObligations: 0,
+        unsatisfiedManualObligations: 0,
+        unsatisfiedExecutionObligations: 0,
         settlementWaiters: new Set(),
         resourceFailures: new Map(),
       });
@@ -98,6 +192,14 @@ export function createSettler<Input, Candidate = never>(): Settler<
         ResourceCandidate
       >,
     ): SettlementResource<ResourceCandidate> {
+      assertActive();
+      if (
+        descriptor.id !== undefined &&
+        (descriptor.id.length === 0 ||
+          reactiveResources.some((resource) => resource.id === descriptor.id))
+      ) {
+        throw new SettlementSnapshotError("Resource IDs must be non-empty and unique");
+      }
       const { resource, registration } = createSettlementResource(descriptor, {
         getInput: currentInput.get,
         getRevisionState: (revision) => revisionStates.get(revision)!,
@@ -112,6 +214,7 @@ export function createSettler<Input, Candidate = never>(): Settler<
       assertActive();
       const state = revisionStates.get(revision)!;
       state.unsatisfiedRequiredObligations += 1;
+      state.unsatisfiedManualObligations += 1;
       let isSatisfied = false;
 
       return Object.freeze({
@@ -120,6 +223,7 @@ export function createSettler<Input, Candidate = never>(): Settler<
             return;
           }
           isSatisfied = true;
+          state.unsatisfiedManualObligations -= 1;
           satisfyRequiredObligation(state);
         },
       });
@@ -134,6 +238,7 @@ export function createSettler<Input, Candidate = never>(): Settler<
 
       if (isRequiredForSettlement) {
         state.unsatisfiedRequiredObligations += 1;
+        state.unsatisfiedExecutionObligations += 1;
       }
 
       return Object.freeze({
@@ -160,9 +265,11 @@ export function createSettler<Input, Candidate = never>(): Settler<
           }
 
           committedCandidate = candidate;
+          committedRevision = revision;
 
           if (!isRequiredObligationSatisfied) {
             isRequiredObligationSatisfied = true;
+            state.unsatisfiedExecutionObligations -= 1;
             satisfyRequiredObligation(state);
           }
 
@@ -227,4 +334,5 @@ export function createSettler<Input, Candidate = never>(): Settler<
       return Promise.resolve({ status: "settled", revision });
     },
   };
+  return settler;
 }

@@ -1,5 +1,15 @@
 import type { ExecutionIdentity, SettlementRevision } from "./types.js";
 
+export class SettlementSnapshotError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "SettlementSnapshotError";
+    this.cause = cause;
+  }
+}
+
 export class SettlerDisposedError extends Error {
   constructor() {
     super("The settler has been disposed");

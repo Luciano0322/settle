@@ -1,14 +1,21 @@
 import type { SettlementExecutionError } from "./errors.js";
 import type { SettlementRevision } from "./types.js";
+import type { ResourceSnapshotState } from "./snapshot.js";
 
 export type RevisionState = {
   supersededBy?: SettlementRevision;
   unsatisfiedRequiredObligations: number;
+  unsatisfiedManualObligations: number;
+  unsatisfiedExecutionObligations: number;
   settlementWaiters: Set<() => void>;
   resourceFailures: Map<ReactiveResourceRegistration, SettlementExecutionError>;
 };
 
 export type ReactiveResourceRegistration = {
+  id?: string;
+  snapshot(): ResourceSnapshotState;
+  restore(state: ResourceSnapshotState): void;
+  rebind(): void;
   evaluate(revision: SettlementRevision): number;
   cancel(revision: SettlementRevision): void;
   dispose(): void;

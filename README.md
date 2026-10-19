@@ -442,7 +442,7 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 7 surface is intentionally small:
+The implemented Phase 8 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
@@ -646,7 +646,7 @@ or retry mechanism.
 A Settle instance may eventually expose a lifecycle similar to:
 
 ```ts
-type Settler<Input, Output, SnapshotState, Revision> = {
+type Settler<Input, Output, Revision> = {
   receive(input: Input): Revision;
 
   settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
@@ -655,7 +655,9 @@ type Settler<Input, Output, SnapshotState, Revision> = {
 
   inspect(): SettlementInspection<Output>;
 
-  snapshot(): SettlementSnapshot<SnapshotState>;
+  snapshot(): SettlementSnapshot;
+
+  restore(snapshot: unknown): RestoredSettlement<Output>;
 
   trace(): readonly SettlementTraceEvent[];
 
@@ -676,47 +678,96 @@ surface growth.
 
 ## Snapshot and restore
 
-Settle is designed so correctness does not require one JavaScript object to stay
-alive forever.
+Snapshots use `@signal-kernel/snapshot` directly for graph compatibility,
+JSON validation, capture, transfer, and restore. Settle adds the validity state
+needed to reuse results and reconstruct unsatisfied obligations.
 
-A lifecycle may cross process boundaries:
+Opt in with an explicit settlement definition and stable resource IDs:
 
-```text
-create
-  |
-execute
-  |
-snapshot
-  |
-process ends
-  |
-restore
-  |
-continue
+```ts
+import { createSettler } from "@signal-kernel/settle";
+import { decodeJsonSnapshot, encodeJsonSnapshot } from "@signal-kernel/snapshot";
+
+const definition = { id: "search-session", version: "1" };
+
+function createSession() {
+  const settler = createSettler<{ query: string }>({ definition });
+  const result = settler.resource({
+    id: "search-result",
+    input: (state) => state.query,
+    run: async (query, context) => hostSearch(query, context.signal),
+  });
+  return { settler, result };
+}
+
+const source = createSession();
+const revision = source.settler.receive({ query: "reactive systems" });
+await source.result.run(revision);
+await source.settler.settle(revision);
+
+const serialized = encodeJsonSnapshot(source.settler.snapshot());
+const target = createSession();
+const restored = target.settler.restore(decodeJsonSnapshot(serialized));
+
+if (target.result.required(restored.revision)) {
+  // Only the host starts any work still required after restore.
+  await target.result.run(restored.revision);
+}
+await target.settler.settle(restored.revision);
 ```
 
-Snapshots may contain:
+`snapshot()` captures the authoritative input, eligible committed results,
+resource causal input keys, and counts of unsatisfied manual and required
+execution obligations. Pending Promises, controllers, callbacks, live errors,
+execution handles, and runtime references are omitted. Invalid resource
+results and manually committed results from superseded revisions are not
+restored as current results. Application input, reusable results, and reusable
+resource input keys must be JSON-compatible; unsupported live payloads cause
+`SettlementSnapshotError` instead of being silently dropped.
 
-* causal revisions
-* execution metadata
-* reusable settled values
-* application-owned serializable state
-* validity metadata
+`restore(document)` accepts a new instance that has not received input and has
+the same definition ID, version, and resource ID set. Register resources before
+restoring. Invalid documents and incompatible identities are rejected before
+initializing the target. The returned `revision` and all live handles belong
+only to that instance. Resource registration order does not determine restore
+identity or downstream validity propagation.
 
-Snapshots must not contain live objects such as:
+For default input equality, restore compares transferred JSON input keys and
+then binds reusable results to the new selector values. An explicit `equals`
+comparator remains authoritative. If a selector reads changed dependencies
+outside the restored input, its result becomes required rather than reused.
+Without an explicit comparator, JSON key comparison uses serialized values;
+selectors and comparators must be pure. Internal propagation stabilizes before
+settlement is evaluated, without invoking application work.
 
-* Promises
-* AbortController instances
-* subscriptions
-* callbacks
-* timers
-* sockets
-* resource handles
-* runtime object references
+Restore also returns separate host handles for omitted non-resource work:
 
-Pending execution itself is not serialized.
+```ts
+for (const condition of restored.manualObligations) {
+  // The host verifies the corresponding external validity condition.
+  condition.satisfy();
+}
 
-Required work is reconstructed after restore.
+for (const obligation of restored.executionObligations) {
+  const execution = obligation.associateExecution();
+  const candidate = await hostWork();
+  execution.submit(candidate);
+}
+```
+
+Manual handles are idempotent. An execution obligation's
+`associateExecution()` returns its new revision-bound handle idempotently and
+exposes no manual `satisfy()` path. Association alone does not unblock
+settlement; only an eligible candidate commit does. Capture does not cancel
+the source instance, and its later completions cannot affect restored state.
+The application is responsible for assigning any domain meaning to anonymous
+manual or execution obligations; Settle does not serialize or infer work.
+
+`createSettler({ definition, now })` accepts an optional clock for reproducible
+snapshot timestamps. Snapshot definition and resource identities remain
+stable while live causal revision and execution identities are reconstructed
+per instance. This does not by itself certify Temporal Workflow replay safety;
+host-specific replay validation remains part of interoperability work.
 
 ---
 
