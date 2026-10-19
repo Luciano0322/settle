@@ -1,5 +1,15 @@
 import type { ExecutionIdentity, SettlementRevision } from "./types.js";
 
+export class SettlementRevisionError extends Error {
+  readonly revision: SettlementRevision;
+
+  constructor(revision: SettlementRevision) {
+    super("The causal revision does not belong to this settler");
+    this.name = "SettlementRevisionError";
+    this.revision = revision;
+  }
+}
+
 export class SettlementSnapshotError extends Error {
   readonly cause: unknown;
 

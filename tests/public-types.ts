@@ -4,6 +4,10 @@ import {
   type SettlementExecutionError,
   type RestoredExecutionObligation,
   type SettlementSnapshot,
+  type SettlementTraceEvent,
+  type SettlementInspection,
+  type SettlementRevision,
+  type ExecutionIdentity,
 } from "@signal-kernel/settle";
 
 const settler = createSettler<string, string>();
@@ -70,6 +74,30 @@ void snapshotReturnsTransferableDocument;
 void restoreValidatesUntrustedDocuments;
 void restoredExecutionHasNoManualSatisfaction;
 void restoredExecutionRetainsCandidateType;
+
+const inspectionContainsMetadataNotAuthority: Expect<
+  Equal<keyof SettlementInspection, "disposed" | "revision" | "revisionId" | "obligations" | "resources" | "committed">
+> = true;
+const traceIsReadonly: Expect<
+  Equal<ReturnType<typeof settler.trace>, readonly SettlementTraceEvent[]>
+> = true;
+void inspectionContainsMetadataNotAuthority;
+void traceIsReadonly;
+
+// Opaque provenance cannot be assembled from public data or reassigned on a handle.
+// @ts-expect-error Only receive/restore can produce a causal revision.
+const fabricatedRevision: SettlementRevision = {};
+// @ts-expect-error Only execution association can produce an execution identity.
+const fabricatedExecution: ExecutionIdentity = {};
+// @ts-expect-error A candidate cannot replace its execution's causal revision.
+execution.revision = revision;
+// @ts-expect-error A candidate cannot substitute another execution identity.
+execution.identity = fabricatedExecution;
+// @ts-expect-error Inspection has no obligation-satisfaction authority.
+settler.inspect().obligations.satisfy();
+// @ts-expect-error Trace history cannot be appended to by consumers.
+settler.trace().push({});
+void fabricatedRevision;
 
 // Candidate submission requires the revision-bound execution handle.
 // @ts-expect-error Settler intentionally has no direct submission operation.

@@ -1,5 +1,5 @@
 import type { SettlementExecutionError } from "./errors.js";
-import type { SettlementRevision } from "./types.js";
+import type { SettlementResourceInspection, SettlementRevision } from "./types.js";
 import type { ResourceSnapshotState } from "./snapshot.js";
 
 export type RevisionState = {
@@ -13,8 +13,10 @@ export type RevisionState = {
 
 export type ReactiveResourceRegistration = {
   id?: string;
+  traceId: string;
+  inspect(revision?: SettlementRevision): SettlementResourceInspection;
   snapshot(): ResourceSnapshotState;
-  restore(state: ResourceSnapshotState): void;
+  restore(state: ResourceSnapshotState, revision: SettlementRevision): void;
   rebind(): void;
   evaluate(revision: SettlementRevision): number;
   cancel(revision: SettlementRevision): void;

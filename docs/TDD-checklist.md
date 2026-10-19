@@ -306,16 +306,30 @@ Temporal Workflow deterministic replay，host-specific replay 驗證仍屬 Phase
 
 ## Phase 9：trace 與 inspection
 
-- [ ] trace 能回答 candidate 的 execution identity 與 causal revision。
-- [ ] trace 區分 `completed`、`committed` 與 `rejected`。
-- [ ] causal rejection 明確區分 stale revision、identity/provenance mismatch、
+- [x] trace 能回答 candidate 的 execution identity 與 causal revision。
+- [x] trace 區分 `completed`、`committed` 與 `rejected`。
+- [x] causal rejection 明確區分 stale revision、identity/provenance mismatch、
       revoked authority 與 disposal，不使用模糊的 quality rejection。
-- [ ] trace 區分 execution supersession 與 settlement-operation supersession。
-- [ ] trace 區分 `cancelled` 與 `superseded`。
-- [ ] trace 能說明 invalidation、reuse 與 recomputation 的原因。
-- [ ] trace ordering 在 injectable clock/ID 下可重現。
-- [ ] inspection 不提供繞過 atomic commit 的修改能力。
-- [ ] trace listener 的 reentrancy 不會破壞 causal-validation-and-commit atomicity。
+- [x] trace 區分 execution supersession 與 settlement-operation supersession。
+- [x] trace 區分 `cancelled` 與 `superseded`。
+- [x] trace 能說明 invalidation、reuse 與 recomputation 的原因。
+- [x] trace ordering 在 injectable clock 與 deterministic instance-local IDs 下可重現。
+- [x] inspection 不提供繞過 atomic commit 的修改能力。
+- [x] trace listener 的 reentrancy 不會破壞 causal-validation-and-commit atomicity。
+
+已透過公開 `trace()`、`inspect()`、`subscribe(listener)` 驗證；時間沿用
+`now()`，ID 使用可重現序號，不新增 ID generator 設定。inspection 僅提供
+唯讀 metadata，不複製或凍結 candidate payload；通知於完整同步轉換後派送。
+
+identity mismatch 由 opaque readonly execution handle 的型別契約防止；
+runtime 的 foreign revision 入口以 `SettlementRevisionError` 與
+`provenance-mismatch` trace 拒絕，不為測試新增任意 candidate envelope seam。
+另驗證 async-runtime 完成與 Settle commit 之間被新 attempt 取代的交錯，
+確保已 revoked 的 execution 不會因底層已 resolve 而恢復 commit authority。
+
+trace 保留於 instance 記憶體，未實作 bounded retention／持久化；完整
+taxonomy 與 host-specific replay 保證不屬本階段。注入的 trace clock 須
+pure、同步且回傳 finite number；未注入時以 event sequence 作為 logical time。
 
 Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死所有 event 名稱。
 

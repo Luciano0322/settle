@@ -975,9 +975,9 @@ scheduler. `required(revision)` reports a validity requirement;
 currently valid committed resource result. Settle never automatically invokes
 the application callback.
 
-The inspection, trace, and subscription methods in the longer-term
-lifecycle below remain conceptual. The `receive`, `settle`, `emit`, and
-`dispose` operations, together with Phase 8 snapshot and restore, are implemented.
+The `receive`, `settle`, `emit`, and `dispose` operations, Phase 8 snapshot and
+restore, and Phase 9 `inspect`, `trace`, and `subscribe` methods are implemented.
+Inspection exposes metadata, not candidate payloads or authority-bearing handles.
 
 Conceptually, the settlement result distinguishes the two successful lifecycle
 outcomes:
@@ -1000,7 +1000,7 @@ The semantic requirements do not: the caller selects one revision, and a
 fulfilled settlement operation reports either `settled` or `superseded` for
 that revision.
 
-Conceptual lifecycle interface:
+Abbreviated experimental lifecycle interface (omitting resource and association methods):
 
 ```ts
 type Settler<Input, Output, Revision> = {
@@ -1010,7 +1010,7 @@ type Settler<Input, Output, Revision> = {
 
   emit(): Output;
 
-  inspect(): SettlementInspection<Output>;
+  inspect(): SettlementInspection;
 
   snapshot(): SettlementSnapshot;
 
@@ -1529,6 +1529,72 @@ Settle does not implement those persistence systems.
 ---
 
 # Trace Contract
+
+## Phase 9 implemented contract
+
+The public observation seam is `trace()`, `inspect()`, and `subscribe(listener)`.
+`trace()` returns a frozen copy of the history containing frozen events.
+`inspect()` returns frozen, detached metadata: the current revision, disposal
+state, unsatisfied obligation counts, resource status/provenance, and last
+manual-commit provenance. Neither exposes candidate payloads, live mutable
+runtime objects, submission authority, or satisfaction handles. Inspection
+does not clone or freeze opaque caller-owned payloads. Resource provenance
+retains the producing execution/revision when its result is reused.
+
+Event envelopes carry `version: 1`, `id`, `sequence`, `timestamp`, `subject`,
+`type`, and a revision identity plus readable `revisionId`. Execution events
+include `execution`/`executionId`; settlement operations have `settlementId`.
+Resources use explicit descriptor IDs or collision-free generated IDs.
+Supersession links identify the superseding revision/execution in both opaque
+and readable form. Readable IDs are deterministic instance-local sequences,
+not transferable authority. Trace timestamps use injected `now()` or logical
+event-sequence time. An injected clock must be pure, synchronous, and return
+finite numbers; it continues to feed the native snapshot scope independently.
+
+The necessary semantics are implemented without freezing the full taxonomy:
+
+* Revision `changed` identifies newly received causal state.
+* Execution `started`, `completed`, `committed`, `rejected`, and `failed` are
+  distinct. Manual `submit` is the host's completion report, not an independently
+  observed external execution lifecycle.
+* Execution `superseded` reports lost authority; settlement `superseded`
+  terminates one identified operation for its requested revision. Replacement
+  within a revision links the previous execution to the new execution.
+* `cancelled` records async-runtime's abort request, not physical termination.
+  Late completion can still be recorded and rejected after cancellation.
+* Rejection distinguishes `stale-revision`, `revoked-authority`, and `disposed`.
+  Operational errors use `failed` with `execution-failed` or `disposed`, never
+  domain-quality rejection. Payloads and opaque error causes are not logged.
+* Foreign revision requests fail with `SettlementRevisionError` and a revision
+  `rejected` event carrying `provenance-mismatch`, before execution association.
+  `require`/`associateExecution` throw; `settle`/resource `run` reject. Handles
+  prevent assembling candidates with substituted execution/revision fields;
+  there is no unchecked candidate-envelope submission seam.
+* Resource `invalidated`, `reused`, and `recomputed` explain uninitialized state,
+  input/dependency changes, unchanged input, or restored state. `recomputed`
+  describes an eligible host-started result committed to a resource; none of
+  these events schedules application work.
+* `restored` identifies reconstructed revision state. Snapshot transfer does
+  not persist trace history or listeners. Reusable restored values receive
+  fresh local revision provenance, not source execution authority.
+
+Subscriptions receive only future events and return idempotent unsubscribe
+functions. Delivery is synchronous after each complete state transition,
+including validation/commit, downstream validity propagation, obligation updates,
+and settlement evaluation. Async start and completion are separate transitions;
+observation does not hold a transaction across an await. Reentrant listener
+operations append later notifications, never callbacks in the middle of a commit.
+Listener exceptions are isolated and ignored, so they cannot change a commit or
+block other observers. Events describe recorded transitions; a listener's read
+may reflect newer reentrant state. Subscriptions can observe late events after
+disposal and remain host-owned until unsubscribed.
+
+The instance retains its full trace in memory. Bounded retention, persistence,
+exporters, and a comprehensive frozen taxonomy remain outside Phase 9.
+Deterministic core trace ordering is not a claim of Temporal replay compatibility;
+that remains a Phase 10 host-validation task.
+
+## Broader trace design
 
 Trace is a versioned public semantic contract.
 

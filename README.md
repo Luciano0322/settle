@@ -522,6 +522,9 @@ firstExecution.submit(lateCandidate);
 
 The revision representation is opaque. Callers pass the identity returned by
 `receive()` back to revision-scoped operations rather than inspecting it.
+Revisions belong to one settler. Foreign revisions cause `require` and
+`associateExecution` to throw `SettlementRevisionError`; `settle` and resource
+`run` reject with that error before any execution authority is created.
 
 `require()` records a validity condition before settlement evaluation. The
 returned handle's `satisfy()` operation is idempotent and only reports that the
@@ -641,9 +644,9 @@ or retry mechanism.
 
 ---
 
-## Planned lifecycle
+## Lifecycle
 
-A Settle instance may eventually expose a lifecycle similar to:
+The implemented lifecycle includes these observation methods:
 
 ```ts
 type Settler<Input, Output, Revision> = {
@@ -653,7 +656,7 @@ type Settler<Input, Output, Revision> = {
 
   emit(): Output;
 
-  inspect(): SettlementInspection<Output>;
+  inspect(): SettlementInspection;
 
   snapshot(): SettlementSnapshot;
 
@@ -669,7 +672,8 @@ type Settler<Input, Output, Revision> = {
 };
 ```
 
-This interface remains experimental.
+This abbreviated interface remains experimental; resource and execution
+association methods are described above.
 
 The implementation will be driven by demonstrated behavior rather than API
 surface growth.
@@ -801,9 +805,65 @@ Late work from A must not be able to commit into B or C.
 
 ## Traceability
 
-Execution validity should be observable.
+Execution validity is observable through `trace()`, `inspect()`, and
+`subscribe(listener)`:
 
-Candidate trace concepts include:
+```ts
+const unsubscribe = settler.subscribe((event) => {
+  console.log(event.sequence, event.subject, event.type, event.reason);
+});
+
+const events = settler.trace(); // Frozen history snapshot; no live array.
+const state = settler.inspect(); // Frozen metadata; no candidate payload or handles.
+console.log(state.revisionId, state.obligations, state.resources);
+
+unsubscribe(); // Idempotent; does not discard trace history.
+```
+
+Events carry `version: 1`, an event ID, sequence, timestamp, subject, and causal
+revision identity/ID. Execution events include execution identity/ID; settlement
+operations have separate `settlementId` values. Supersession links carry opaque
+identities and readable IDs. Resource IDs use descriptor IDs when provided,
+otherwise deterministic, collision-free local IDs. All readable IDs are
+instance-local correlation data, not transferable commit authority.
+
+`completed` reports a produced candidate, not commit or domain acceptance. For
+manual handles, submission is the host's completion report; Settle cannot observe
+when external work actually started or finished. `cancelled` records an abort
+request, not physical termination. Late completion can therefore be rejected.
+
+Rejection distinguishes `stale-revision`, `revoked-authority` (a replaced attempt
+or changed resource input), and `disposed`. Foreign revision requests report
+`provenance-mismatch` before execution association. Operational errors are
+`failed`, not quality rejection. Resource invalidation, reuse, and recomputation
+events explain their cause; none schedules application work.
+
+Subscriptions receive only future events. Notifications are synchronous and
+ordered, after the complete state transition including commit, validity
+propagation, and obligation updates. Reentrant listener operations append later
+notifications and cannot interrupt validation/commit. Observer exceptions are
+isolated and ignored; observers must handle their own reporting failures. An
+event describes its recorded transition, but a read inside a listener can see
+newer state from an earlier listener. Subscriptions can observe late events
+after disposal and should be explicitly unsubscribed when no longer needed.
+
+`inspect()` reports the current revision, disposal state, unsatisfied obligation
+counts, resources, and last manual-commit provenance. Reused resources retain
+their producing revision/execution metadata. It exposes neither candidate data
+nor satisfaction/submission methods, and never freezes caller-owned payloads.
+
+Trace IDs and ordering are deterministic per instance. Timestamps use `now()`
+when supplied, otherwise the event sequence as logical time (not wall-clock
+milliseconds). An injected clock must be pure, synchronous, and finite-valued;
+the same option still feeds snapshot's native clock. Snapshots do not persist
+trace history or listeners. Restore creates fresh local provenance and reports
+reusable restored state without recovering source execution authority.
+
+The current instance retains its full trace in memory; bounded retention and
+persistence are not implemented. Envelopes are versioned, while a comprehensive
+taxonomy remains experimental until host validation.
+
+Broader candidate trace concepts include:
 
 ```text
 started
@@ -829,7 +889,7 @@ resolved  != accepted
 cancelled != superseded
 ```
 
-A trace should eventually be able to answer:
+The implemented trace can answer:
 
 * Which execution produced this result?
 * Which causal revision created it?

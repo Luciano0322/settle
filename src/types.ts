@@ -12,6 +12,61 @@ export type ExecutionIdentity = Readonly<{
   readonly [executionIdentityBrand]: "ExecutionIdentity";
 }>;
 
+export type SettlementTraceEvent = Readonly<{
+  version: 1;
+  id: string;
+  sequence: number;
+  timestamp: number;
+  type:
+    | "started" | "completed" | "committed" | "rejected" | "superseded"
+    | "settled" | "cancelled" | "invalidated" | "reused" | "recomputed"
+    | "failed" | "restored" | "changed";
+  subject: "execution" | "settlement" | "resource" | "revision";
+  revision: SettlementRevision;
+  revisionId: string;
+  execution?: ExecutionIdentity;
+  executionId?: string;
+  settlementId?: string;
+  resourceId?: string;
+  reason?:
+    | "stale-revision" | "disposed" | "revoked-authority" | "uninitialized"
+    | "unchanged-input" | "input-changed" | "dependency-changed"
+    | "execution-failed" | "restored-state" | "provenance-mismatch";
+  supersededBy?: SettlementRevision;
+  supersededByRevisionId?: string;
+  supersededByExecution?: ExecutionIdentity;
+  supersededByExecutionId?: string;
+}>;
+
+export type SettlementResourceInspection = Readonly<{
+  id: string;
+  required: boolean;
+  status: "uninitialized" | "required" | "pending" | "valid" | "failed" | "disposed";
+  execution?: ExecutionIdentity;
+  executionId?: string;
+  revision?: SettlementRevision;
+  revisionId?: string;
+}>;
+
+export type SettlementInspection = Readonly<{
+  disposed: boolean;
+  revision?: SettlementRevision;
+  revisionId?: string;
+  obligations: Readonly<{
+    required: number;
+    manual: number;
+    executions: number;
+    resources: number;
+  }>;
+  resources: readonly SettlementResourceInspection[];
+  committed?: Readonly<{
+    revision: SettlementRevision;
+    revisionId: string;
+    execution?: ExecutionIdentity;
+    executionId?: string;
+  }>;
+}>;
+
 export type CandidateSubmissionOutcome<
   Revision extends SettlementRevision = SettlementRevision,
 > =
@@ -98,6 +153,9 @@ export type SettlementResource<Candidate> = Readonly<{
 }>;
 
 export type Settler<Input, Candidate = never> = {
+  trace(): readonly SettlementTraceEvent[];
+  subscribe(listener: (event: SettlementTraceEvent) => void): () => void;
+  inspect(): SettlementInspection;
   snapshot(): SettlementSnapshot;
   restore(snapshot: unknown): RestoredSettlement<Candidate>;
   dispose(): void;
