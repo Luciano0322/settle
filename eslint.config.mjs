@@ -17,6 +17,8 @@ export default tseslint.config(
             {
               group: [
                 "@langchain/*",
+                "@inngest/*",
+                "@playwright/*",
                 "@temporalio/*",
                 "@anthropic-ai/*",
                 "inngest",

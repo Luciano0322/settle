@@ -912,6 +912,12 @@ It does not own:
 
 ## Host interoperability
 
+Phase 10 runnable references are available in [examples](./examples/README.md),
+with [validation evidence and explicit limits](./docs/phase-10-validation.md).
+They exercise plain async, real LangGraph checkpoints, Inngest's SDK test engine,
+and Temporal's Activity-local seam. Browser smoke runs the built public exports
+in real Chromium. This is not a production adapter or Workflow replay claim.
+
 Interoperability with existing execution hosts is a core validation strategy.
 
 The goal is **not** to turn Settle into an adapter framework.

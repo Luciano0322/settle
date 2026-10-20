@@ -335,16 +335,25 @@ Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死�
 
 ## Phase 10：host interoperability
 
-- [ ] 建立 plain-async changing-input reference example。
-- [ ] 將 `reactive-correction-graph` 遷移至 Settle，維持既有 causal-validity
+- [x] 建立 plain-async changing-input reference example。
+- [x] 將 `reactive-correction-graph` 遷移至 Settle，維持既有 causal-validity
       regression baseline，不把 settlement 當成 correction quality 證明。
-- [ ] 建立 LangGraph example，證明 Settle 不擁有 graph topology 或 node execution。
-- [ ] 建立 Inngest prototype，證明 Settle 不擁有 retry 或 durable step execution。
-- [ ] 建立 Temporal prototype，驗證 deterministic replay 或 Activity-local seam。
-- [ ] 通過 browser smoke test。
-- [ ] 通過 Node ESM smoke test。
-- [ ] 所有 examples 只使用 package public exports。
-- [ ] core package import guard 拒絕 host/framework/domain dependencies。
+- [x] 建立 LangGraph example，證明 Settle 不擁有 graph topology 或 node execution。
+- [x] 建立 Inngest prototype，證明 Settle 不擁有 retry 或 durable step execution。
+- [x] 建立 Temporal prototype，驗證 deterministic replay 或 Activity-local seam。
+- [x] 通過 browser smoke test。
+- [x] 通過 Node ESM smoke test。
+- [x] 所有 examples 只使用 package public exports。
+- [x] core package import guard 拒絕 host/framework/domain dependencies。
+
+驗證紀錄與範圍見 [Phase 10 validation](./phase-10-validation.md)。使用真實 SDK；
+Inngest platform step cache 與 Temporal Activity context 採官方測試環境。
+Temporal 本輪驗證 Activity-local seam，不宣稱 Workflow deterministic replay。
+browser smoke 使用打包後 public exports 在實際 Chromium 執行；CI 增加獨立 job。
+
+correction-graph 的實際變更位於上一層 repo 的 `feat/settle-migration` 分支，
+以 `link:../settle` 與 pinned paired-checkout CI 驗證未發布版本；既有 JSON
+baseline 不變。正式獨立使用前仍須換成已發布版本；本階段不合併或發布。
 
 ## 階段性 review
 

@@ -1676,6 +1676,13 @@ These may consume the trace contract externally.
 
 Host interoperability is a first-class architectural validation strategy.
 
+Phase 10 implements the plain-async, LangGraph, Inngest, and Temporal reference
+paths under `examples/`, plus the actual sibling correction-graph migration.
+See [validation evidence](./phase-10-validation.md) for tested SDK seams, package
+smokes, the unchanged correction baseline, and paired-repository setup. The
+accepted Temporal scope is Activity-local; Workflow deterministic replay and
+production durable execution remain unproven, not implied by passing these tests.
+
 The goal is not to provide four production adapters in `0.1.0`.
 
 The goal is to prove that the same Settle semantics survive four increasingly
