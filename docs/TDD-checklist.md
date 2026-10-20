@@ -71,8 +71,9 @@ Application 決定什麼結果具有 domain acceptance，host 決定提交什麼
 將 candidate payload 視為 opaque data，不進行 ranking、scoring、quality
 judgment，也不從 model confidence 推導 commit authority。
 
-`submit()` 是唯一能讓 candidate 進入 observable state 的 Settle-controlled
-causal-validation-and-commit transition。
+手動 execution 透過 `submit()` 進入 Settle-controlled
+causal-validation-and-commit transition；Phase 6 resource 的 `run()` 完成後
+也必須經過同樣的原子驗證與提交。
 公開 interface 不應提供可在驗證後保留、並於未來才使用的 commit authority，
 否則會形成 RFC 所禁止的 check-then-commit race。
 
@@ -246,60 +247,113 @@ reactive validity conditions 尚未滿足，但是否以及如何執行 applicat
 
 ## Phase 7：error、dispose 與 cancellation
 
-已由 RFC 決定的部分：
+- [x] physical cancellation 失敗不影響 stale-result correctness。
+- [x] superseded execution 的 late rejection 不會把 `superseded` 改成 operational failure。
+- [x] `dispose()` 永久撤銷所有 pending execution 的 commit authority。
+- [x] dispose 後的 candidate 不可寫入 observable state。
+- [x] dispose 是 idempotent。
+- [x] current revision 的 required resource execution failure 以
+      `SettlementExecutionError` reject `run()` 與正在等待的 `settle(revision)`，
+      保留原始 `cause`、execution identity 與 causal revision。
+- [x] failure 不滿足 obligation，也不自動 retry；host 明確 retry 成功後，
+      新的 settlement operation 才可 settled，已 rejected Promise 不會復活。
+- [x] execution failure 與 receive N+1 以 Settle 觀察到的 transition 順序決定；
+      尚未被觀察的 Promise rejection 不會推翻已發生的 supersession。
+- [x] disposal reject 尚在等待的 settlement；已 fulfilled/rejected Promise
+      維持原結果。dispose 後的新 `settle()` 對 superseded revision 仍回報
+      superseded，對 authoritative revision 則 reject `SettlerDisposedError`。
+- [x] disposed instance 不接受新 input、obligation、execution、resource 或 run。
+- [x] cancellation 通知之前先撤銷 authority，避免 host callback reentrancy 提交。
+- [x] superseded revision 的 `run()` 不呼叫 application work 或取消目前 execution。
+- [x] 同 revision 被新 attempt 取代或 input 已改變的 late failure，不影響目前 settlement。
+- [x] 某一 resource retry 不清除其他 required resource 的 failure。
 
-- [ ] physical cancellation 失敗不影響 stale-result correctness。
-- [ ] superseded execution 的 late rejection 不會把 `superseded` 改成 operational failure。
-- [ ] `dispose()` 永久撤銷所有 pending execution 的 commit authority。
-- [ ] dispose 後的 candidate 不可寫入 observable state。
-- [ ] dispose 是 idempotent。
+### Phase 7 exit criterion
 
-下列項目要等 operational error precedence 定案後才進入 red–green：
-
-- [ ] 決定 current revision execution failure 是否立即 reject `settle(revision)`。
-- [ ] 決定 execution failure 與 receive N+1 競爭時的 precedence。
-- [ ] 決定 dispose 與已 settled/superseded settlement operation 的互動。
+錯誤、supersession 與 disposal 的先後順序已有 public-seam tests 保護；
+Settle 直接沿用 async-runtime 的 cancellation 與 current-attempt error 機制，
+host 仍擁有 execution 與 retry 決策。`settle()` 成功結果維持 settled/superseded，
+operational failure 透過 Promise rejection 表達。
 
 ## Phase 8：snapshot 與 restore
 
-- [ ] settled observable state 可以 snapshot 並 restore。
-- [ ] snapshot 不包含 live Promise、AbortController 或 execution object。
-- [ ] snapshot 時 unsatisfied required validity obligations 在 restore 後重建，
+- [x] settled observable state 可以 snapshot 並 restore。
+- [x] snapshot 不包含 live Promise、AbortController 或 execution object。
+- [x] snapshot 時 unsatisfied required validity obligations 在 restore 後重建，
       不序列化或推導 application work。
-- [ ] restore 不自行啟動 application execution。
-- [ ] restore 前 execution 的 late candidate 不能 commit 到 restored instance。
-- [ ] 由同一 snapshot restore 的兩個 instances 完全隔離。
-- [ ] 不相容 definition/schema 的 snapshot 被拒絕。
-- [ ] restored reusable result 不產生不必要的 validity obligation。
-- [ ] deterministic ID/clock 在 restore 後仍符合 replay host 的要求。
+- [x] restore 不自行啟動 application execution。
+- [x] restore 前 execution 的 late candidate 不能 commit 到 restored instance。
+- [x] 由同一 snapshot restore 的兩個 instances 完全隔離。
+- [x] 不相容 definition/schema 的 snapshot 被拒絕。
+- [x] restored reusable result 不產生不必要的 validity obligation。
+- [x] snapshot 的 definition/node/resource IDs 與可注入 clock 在 restore 後
+      可重現；live revision/execution identity 重新建立且彼此隔離。
+- [x] 手動 obligation 還原為新的 idempotent satisfy handle；required execution
+      obligation 只能透過新 execution 的有效 commit 滿足。
+- [x] selector 的外部依賴改變時，不 reuse 舊 causal input key 的結果。
+- [x] restore 尊重明確指定的 input comparator，預設以 JSON transfer key 重新綁定。
+- [x] 不同 resource 註冊順序下，downstream validity propagation 仍持續至穩定。
+- [x] malformed counts、缺少 state 或不符 resource ID 集合時，在初始化前拒絕。
+
+### Phase 8 exit criterion
+
+直接沿用 `@signal-kernel/snapshot` 的 capture/restore、JSON codec 與相容性檢查。
+Settle 只補 validity metadata、causal key 檢查與 obligation 重建；restore 僅能
+套用到已註冊相同 resources、但尚未 receive 的新 instance。
+
+固定 snapshot clock 與穩定 serialized identities 已驗證；這不等同於完成
+Temporal Workflow deterministic replay，host-specific replay 驗證仍屬 Phase 10。
 
 ## Phase 9：trace 與 inspection
 
-- [ ] trace 能回答 candidate 的 execution identity 與 causal revision。
-- [ ] trace 區分 `completed`、`committed` 與 `rejected`。
-- [ ] causal rejection 明確區分 stale revision、identity/provenance mismatch、
+- [x] trace 能回答 candidate 的 execution identity 與 causal revision。
+- [x] trace 區分 `completed`、`committed` 與 `rejected`。
+- [x] causal rejection 明確區分 stale revision、identity/provenance mismatch、
       revoked authority 與 disposal，不使用模糊的 quality rejection。
-- [ ] trace 區分 execution supersession 與 settlement-operation supersession。
-- [ ] trace 區分 `cancelled` 與 `superseded`。
-- [ ] trace 能說明 invalidation、reuse 與 recomputation 的原因。
-- [ ] trace ordering 在 injectable clock/ID 下可重現。
-- [ ] inspection 不提供繞過 atomic commit 的修改能力。
-- [ ] trace listener 的 reentrancy 不會破壞 causal-validation-and-commit atomicity。
+- [x] trace 區分 execution supersession 與 settlement-operation supersession。
+- [x] trace 區分 `cancelled` 與 `superseded`。
+- [x] trace 能說明 invalidation、reuse 與 recomputation 的原因。
+- [x] trace ordering 在 injectable clock 與 deterministic instance-local IDs 下可重現。
+- [x] inspection 不提供繞過 atomic commit 的修改能力。
+- [x] trace listener 的 reentrancy 不會破壞 causal-validation-and-commit atomicity。
+
+已透過公開 `trace()`、`inspect()`、`subscribe(listener)` 驗證；時間沿用
+`now()`，ID 使用可重現序號，不新增 ID generator 設定。inspection 僅提供
+唯讀 metadata，不複製或凍結 candidate payload；通知於完整同步轉換後派送。
+
+identity mismatch 由 opaque readonly execution handle 的型別契約防止；
+runtime 的 foreign revision 入口以 `SettlementRevisionError` 與
+`provenance-mismatch` trace 拒絕，不為測試新增任意 candidate envelope seam。
+另驗證 async-runtime 完成與 Settle commit 之間被新 attempt 取代的交錯，
+確保已 revoked 的 execution 不會因底層已 resolve 而恢復 commit authority。
+
+trace 保留於 instance 記憶體，未實作 bounded retention／持久化；完整
+taxonomy 與 host-specific replay 保證不屬本階段。注入的 trace clock 須
+pure、同步且回傳 finite number；未注入時以 event sequence 作為 logical time。
 
 Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死所有 event 名稱。
 
 ## Phase 10：host interoperability
 
-- [ ] 建立 plain-async changing-input reference example。
-- [ ] 將 `reactive-correction-graph` 遷移至 Settle，維持既有 causal-validity
+- [x] 建立 plain-async changing-input reference example。
+- [x] 將 `reactive-correction-graph` 遷移至 Settle，維持既有 causal-validity
       regression baseline，不把 settlement 當成 correction quality 證明。
-- [ ] 建立 LangGraph example，證明 Settle 不擁有 graph topology 或 node execution。
-- [ ] 建立 Inngest prototype，證明 Settle 不擁有 retry 或 durable step execution。
-- [ ] 建立 Temporal prototype，驗證 deterministic replay 或 Activity-local seam。
-- [ ] 通過 browser smoke test。
-- [ ] 通過 Node ESM smoke test。
-- [ ] 所有 examples 只使用 package public exports。
-- [ ] core package import guard 拒絕 host/framework/domain dependencies。
+- [x] 建立 LangGraph example，證明 Settle 不擁有 graph topology 或 node execution。
+- [x] 建立 Inngest prototype，證明 Settle 不擁有 retry 或 durable step execution。
+- [x] 建立 Temporal prototype，驗證 deterministic replay 或 Activity-local seam。
+- [x] 通過 browser smoke test。
+- [x] 通過 Node ESM smoke test。
+- [x] 所有 examples 只使用 package public exports。
+- [x] core package import guard 拒絕 host/framework/domain dependencies。
+
+驗證紀錄與範圍見 [Phase 10 validation](./phase-10-validation.md)。使用真實 SDK；
+Inngest platform step cache 與 Temporal Activity context 採官方測試環境。
+Temporal 本輪驗證 Activity-local seam，不宣稱 Workflow deterministic replay。
+browser smoke 使用打包後 public exports 在實際 Chromium 執行；CI 增加獨立 job。
+
+correction-graph 的實際變更位於上一層 repo 的 `feat/settle-migration` 分支，
+以 `link:../settle` 與 pinned paired-checkout CI 驗證未發布版本；既有 JSON
+baseline 不變。正式獨立使用前仍須換成已發布版本；本階段不合併或發布。
 
 ## 階段性 review
 
@@ -321,7 +375,6 @@ Trace taxonomy 尚未凍結，因此先測必要語義資訊，不提前鎖死�
 - execution-association 與 candidate-submission 的最終方法名稱及資料形狀。
 - causal revision 的具體表示方式。
 - supersession 後 `emit()` 的完整語義。
-- operational error、dispose 與 supersession 的 precedence。
 - 完整 trace taxonomy。
 - `/testing` public subpath。
 - 特定 host adapter package。

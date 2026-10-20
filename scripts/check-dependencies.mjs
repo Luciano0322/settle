@@ -12,6 +12,8 @@ const dependencySections = [
 const forbiddenDependencies = [
   /^@anthropic-ai\//,
   /^@langchain\//,
+  /^@inngest\//,
+  /^@playwright\//,
   /^@temporalio\//,
   /^inngest$/,
   /^openai$/,

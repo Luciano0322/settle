@@ -1,5 +1,7 @@
 # Settle
 
+[English](./README.md) | [繁體中文](./README.zh-TW.md)
+
 Execution validity for changing systems.
 
 Settle keeps asynchronous results valid as their causal inputs change.
@@ -442,7 +444,7 @@ The invariant is not.
 
 The final API is not frozen.
 
-The implemented Phase 6 surface is intentionally small:
+The implemented Phase 8 surface is intentionally small:
 
 ```ts
 import { createSettler } from "@signal-kernel/settle";
@@ -522,6 +524,9 @@ firstExecution.submit(lateCandidate);
 
 The revision representation is opaque. Callers pass the identity returned by
 `receive()` back to revision-scoped operations rather than inspecting it.
+Revisions belong to one settler. Foreign revisions cause `require` and
+`associateExecution` to throw `SettlementRevisionError`; `settle` and resource
+`run` reject with that error before any execution authority is created.
 
 `require()` records a validity condition before settlement evaluation. The
 returned handle's `satisfy()` operation is idempotent and only reports that the
@@ -530,10 +535,11 @@ that is not registered as required does not block settlement.
 
 `associateExecution(revision)` creates a distinct opaque execution identity
 bound to that revision. Candidate submission exists only on this association,
-so callers do not assemble or repeat provenance fields. `submit(candidate)` is
-the only current transition that exposes a completed candidate through
-`emit()`; Settle does not inspect candidate scores, confidence, or other domain
-content.
+so callers do not assemble or repeat provenance fields. For externally
+performed work, `submit(candidate)` exposes the completed candidate through
+`settler.emit()`; resource completion follows the same causal validation and
+commit contract through its own handle. Settle does not inspect candidate
+scores, confidence, or other domain content.
 
 Passing `{ requiredForSettlement: true }` registers an execution-associated
 obligation before settlement evaluation. It exposes no manual `satisfy()`
@@ -574,21 +580,89 @@ Those are orchestration concerns.
 
 ---
 
-## Planned lifecycle
+## Errors, cancellation, and disposal
 
-A Settle instance may eventually expose a lifecycle similar to:
+A current required resource failure rejects both its `run(revision)` Promise
+and waiting `settle(revision)` Promises with `SettlementExecutionError`. The
+error preserves the original `cause`, execution identity, and causal revision.
+The resource remains required and its failed candidate never becomes observable.
+
+Handle both Promises when starting work and waiting for settlement together:
 
 ```ts
-type Settler<Input, Output, SnapshotState, Revision> = {
+import { SettlementExecutionError } from "@signal-kernel/settle";
+
+try {
+  await Promise.all([
+    resource.run(revision),
+    settler.settle(revision),
+  ]);
+} catch (error) {
+  if (!(error instanceof SettlementExecutionError)) throw error;
+  // The host decides whether to retry, use a fallback, or receive new input.
+}
+```
+
+Settle never retries automatically. An explicit host retry clears that
+resource's recorded failure when it starts. After a successful retry, a new
+`settle(revision)` call can fulfill; previously rejected Promises remain
+rejected. Other required resources and their failures remain independent.
+
+Failure relevance is checked when Settle observes execution completion. A
+superseded revision's late rejection cannot replace its `superseded` outcome.
+If failure was already reported before new input arrived, that rejected
+settlement Promise keeps its original error. Replaced attempts and results
+whose selected inputs changed within the same revision do not fail current
+settlement. A resource's recorded failure is also removed when its selected
+input changes or its committed result becomes reusable.
+
+`settler.dispose()` permanently revokes commit authority, rejects pending
+settlement with `SettlerDisposedError`, requests async-runtime cancellation,
+and releases internal reactive dependencies. Disposal is idempotent. Even if
+host work ignores cancellation, its late result cannot commit. An existing
+execution's submission or pending resource completion reports
+`{ status: "rejected", reason: "disposed", ... }` after disposal.
+
+After disposal, new `receive`, `require`, `associateExecution`, and `resource`
+calls throw `SettlerDisposedError`; new resource `run` calls reject with that
+error. Read operations retain the last committed state and validity flags.
+Already completed settlement Promises keep their results. New settlement
+calls for an already superseded revision still report `superseded`; calls for
+the disposed authoritative revision reject, even if an earlier operation
+settled it.
+
+Cancellation uses async-runtime's existing lifecycle and does not determine
+causal eligibility. A new revision requests cancellation of its predecessor's
+resource execution, but neither supersession nor disposal waits for physical
+completion. Calling `run` for superseded required work rejects its candidate
+authority without invoking application work. `run` returns `undefined` when
+no work is required or async-runtime replaces an attempt within the same
+revision; a result for a selected input that has since changed is also ignored.
+
+Externally performed work associated with `associateExecution` remains
+host-owned: the host handles its execution errors and explicitly submits
+accepted results. The handle does not introduce a separate failure-reporting
+or retry mechanism.
+
+---
+
+## Lifecycle
+
+The implemented lifecycle includes these observation methods:
+
+```ts
+type Settler<Input, Output, Revision> = {
   receive(input: Input): Revision;
 
   settle(revision: Revision): Promise<SettlementOutcome<Revision>>;
 
   emit(): Output;
 
-  inspect(): SettlementInspection<Output>;
+  inspect(): SettlementInspection;
 
-  snapshot(): SettlementSnapshot<SnapshotState>;
+  snapshot(): SettlementSnapshot;
+
+  restore(snapshot: unknown): RestoredSettlement<Output>;
 
   trace(): readonly SettlementTraceEvent[];
 
@@ -600,7 +674,8 @@ type Settler<Input, Output, SnapshotState, Revision> = {
 };
 ```
 
-This interface remains experimental.
+This abbreviated interface remains experimental; resource and execution
+association methods are described above.
 
 The implementation will be driven by demonstrated behavior rather than API
 surface growth.
@@ -609,47 +684,96 @@ surface growth.
 
 ## Snapshot and restore
 
-Settle is designed so correctness does not require one JavaScript object to stay
-alive forever.
+Snapshots use `@signal-kernel/snapshot` directly for graph compatibility,
+JSON validation, capture, transfer, and restore. Settle adds the validity state
+needed to reuse results and reconstruct unsatisfied obligations.
 
-A lifecycle may cross process boundaries:
+Opt in with an explicit settlement definition and stable resource IDs:
 
-```text
-create
-  |
-execute
-  |
-snapshot
-  |
-process ends
-  |
-restore
-  |
-continue
+```ts
+import { createSettler } from "@signal-kernel/settle";
+import { decodeJsonSnapshot, encodeJsonSnapshot } from "@signal-kernel/snapshot";
+
+const definition = { id: "search-session", version: "1" };
+
+function createSession() {
+  const settler = createSettler<{ query: string }>({ definition });
+  const result = settler.resource({
+    id: "search-result",
+    input: (state) => state.query,
+    run: async (query, context) => hostSearch(query, context.signal),
+  });
+  return { settler, result };
+}
+
+const source = createSession();
+const revision = source.settler.receive({ query: "reactive systems" });
+await source.result.run(revision);
+await source.settler.settle(revision);
+
+const serialized = encodeJsonSnapshot(source.settler.snapshot());
+const target = createSession();
+const restored = target.settler.restore(decodeJsonSnapshot(serialized));
+
+if (target.result.required(restored.revision)) {
+  // Only the host starts any work still required after restore.
+  await target.result.run(restored.revision);
+}
+await target.settler.settle(restored.revision);
 ```
 
-Snapshots may contain:
+`snapshot()` captures the authoritative input, eligible committed results,
+resource causal input keys, and counts of unsatisfied manual and required
+execution obligations. Pending Promises, controllers, callbacks, live errors,
+execution handles, and runtime references are omitted. Invalid resource
+results and manually committed results from superseded revisions are not
+restored as current results. Application input, reusable results, and reusable
+resource input keys must be JSON-compatible; unsupported live payloads cause
+`SettlementSnapshotError` instead of being silently dropped.
 
-* causal revisions
-* execution metadata
-* reusable settled values
-* application-owned serializable state
-* validity metadata
+`restore(document)` accepts a new instance that has not received input and has
+the same definition ID, version, and resource ID set. Register resources before
+restoring. Invalid documents and incompatible identities are rejected before
+initializing the target. The returned `revision` and all live handles belong
+only to that instance. Resource registration order does not determine restore
+identity or downstream validity propagation.
 
-Snapshots must not contain live objects such as:
+For default input equality, restore compares transferred JSON input keys and
+then binds reusable results to the new selector values. An explicit `equals`
+comparator remains authoritative. If a selector reads changed dependencies
+outside the restored input, its result becomes required rather than reused.
+Without an explicit comparator, JSON key comparison uses serialized values;
+selectors and comparators must be pure. Internal propagation stabilizes before
+settlement is evaluated, without invoking application work.
 
-* Promises
-* AbortController instances
-* subscriptions
-* callbacks
-* timers
-* sockets
-* resource handles
-* runtime object references
+Restore also returns separate host handles for omitted non-resource work:
 
-Pending execution itself is not serialized.
+```ts
+for (const condition of restored.manualObligations) {
+  // The host verifies the corresponding external validity condition.
+  condition.satisfy();
+}
 
-Required work is reconstructed after restore.
+for (const obligation of restored.executionObligations) {
+  const execution = obligation.associateExecution();
+  const candidate = await hostWork();
+  execution.submit(candidate);
+}
+```
+
+Manual handles are idempotent. An execution obligation's
+`associateExecution()` returns its new revision-bound handle idempotently and
+exposes no manual `satisfy()` path. Association alone does not unblock
+settlement; only an eligible candidate commit does. Capture does not cancel
+the source instance, and its later completions cannot affect restored state.
+The application is responsible for assigning any domain meaning to anonymous
+manual or execution obligations; Settle does not serialize or infer work.
+
+`createSettler({ definition, now })` accepts an optional clock for reproducible
+snapshot timestamps. Snapshot definition and resource identities remain
+stable while live causal revision and execution identities are reconstructed
+per instance. This does not by itself certify Temporal Workflow replay safety;
+host-specific replay validation remains part of interoperability work.
 
 ---
 
@@ -683,9 +807,65 @@ Late work from A must not be able to commit into B or C.
 
 ## Traceability
 
-Execution validity should be observable.
+Execution validity is observable through `trace()`, `inspect()`, and
+`subscribe(listener)`:
 
-Candidate trace concepts include:
+```ts
+const unsubscribe = settler.subscribe((event) => {
+  console.log(event.sequence, event.subject, event.type, event.reason);
+});
+
+const events = settler.trace(); // Frozen history snapshot; no live array.
+const state = settler.inspect(); // Frozen metadata; no candidate payload or handles.
+console.log(state.revisionId, state.obligations, state.resources);
+
+unsubscribe(); // Idempotent; does not discard trace history.
+```
+
+Events carry `version: 1`, an event ID, sequence, timestamp, subject, and causal
+revision identity/ID. Execution events include execution identity/ID; settlement
+operations have separate `settlementId` values. Supersession links carry opaque
+identities and readable IDs. Resource IDs use descriptor IDs when provided,
+otherwise deterministic, collision-free local IDs. All readable IDs are
+instance-local correlation data, not transferable commit authority.
+
+`completed` reports a produced candidate, not commit or domain acceptance. For
+manual handles, submission is the host's completion report; Settle cannot observe
+when external work actually started or finished. `cancelled` records an abort
+request, not physical termination. Late completion can therefore be rejected.
+
+Rejection distinguishes `stale-revision`, `revoked-authority` (a replaced attempt
+or changed resource input), and `disposed`. Foreign revision requests report
+`provenance-mismatch` before execution association. Operational errors are
+`failed`, not quality rejection. Resource invalidation, reuse, and recomputation
+events explain their cause; none schedules application work.
+
+Subscriptions receive only future events. Notifications are synchronous and
+ordered, after the complete state transition including commit, validity
+propagation, and obligation updates. Reentrant listener operations append later
+notifications and cannot interrupt validation/commit. Observer exceptions are
+isolated and ignored; observers must handle their own reporting failures. An
+event describes its recorded transition, but a read inside a listener can see
+newer state from an earlier listener. Subscriptions can observe late events
+after disposal and should be explicitly unsubscribed when no longer needed.
+
+`inspect()` reports the current revision, disposal state, unsatisfied obligation
+counts, resources, and last manual-commit provenance. Reused resources retain
+their producing revision/execution metadata. It exposes neither candidate data
+nor satisfaction/submission methods, and never freezes caller-owned payloads.
+
+Trace IDs and ordering are deterministic per instance. Timestamps use `now()`
+when supplied, otherwise the event sequence as logical time (not wall-clock
+milliseconds). An injected clock must be pure, synchronous, and finite-valued;
+the same option still feeds snapshot's native clock. Snapshots do not persist
+trace history or listeners. Restore creates fresh local provenance and reports
+reusable restored state without recovering source execution authority.
+
+The current instance retains its full trace in memory; bounded retention and
+persistence are not implemented. Envelopes are versioned, while a comprehensive
+taxonomy remains experimental until host validation.
+
+Broader candidate trace concepts include:
 
 ```text
 started
@@ -711,7 +891,7 @@ resolved  != accepted
 cancelled != superseded
 ```
 
-A trace should eventually be able to answer:
+The implemented trace can answer:
 
 * Which execution produced this result?
 * Which causal revision created it?
@@ -733,6 +913,12 @@ It does not own:
 ---
 
 ## Host interoperability
+
+Phase 10 runnable references are available in [examples](./examples/README.md),
+with [validation evidence and explicit limits](./docs/phase-10-validation.md).
+They exercise plain async, real LangGraph checkpoints, Inngest's SDK test engine,
+and Temporal's Activity-local seam. Browser smoke runs the built public exports
+in real Chromium. This is not a production adapter or Workflow replay claim.
 
 Interoperability with existing execution hosts is a core validation strategy.
 
