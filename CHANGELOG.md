@@ -1,5 +1,11 @@
 # @signal-kernel/settle
 
+## 0.2.0
+
+### Minor Changes
+
+- [#6](https://github.com/Luciano0322/settle/pull/6) [`0bd3a3f`](https://github.com/Luciano0322/settle/commit/0bd3a3f297f7b01e6073baa298799ff516087b83) Thanks [@Luciano0322](https://github.com/Luciano0322)! - Add execution failure handling and disposal, snapshot/restore, and trace/inspection APIs while preserving revision-scoped settlement and host-owned execution.
+
 ## 0.1.0
 
 ### Minor Changes
