@@ -1,5 +1,7 @@
 # Settle
 
+[English](./README.md) | [繁體中文](./README.zh-TW.md)
+
 Execution validity for changing systems.
 
 Settle keeps asynchronous results valid as their causal inputs change.
