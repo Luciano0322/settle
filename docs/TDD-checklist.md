@@ -371,6 +371,46 @@ baseline 不變。正式獨立使用前仍須換成已發布版本；本階段�
 - [x] settler dispose 之後回傳 disposed，不拋出例外。
 - [x] 不屬於此 settler 的 revision 拋出 SettlementRevisionError。
 
+## run outcomes：明確回報每次 run 的結果
+
+### 整體
+
+- [ ] `run()` 永遠不會 resolve 成 `undefined`，每一條路徑都回傳明確的 outcome。
+- [ ] 每個 outcome 的 `revision` 都是呼叫時傳入的同一個 revision。
+- [ ] 執行失敗仍然 reject `SettlementExecutionError`，不轉成 outcome。
+
+### skipped：沒有啟動任何工作
+
+- [ ] 最新 revision 且 resource 不需要重跑時，回傳 `skipped`。
+- [ ] `skipped` 不建立 execution identity，也不呼叫 `run` callback。
+- [ ] `skipped` 不記錄 started 等 execution trace，也不改變 obligation。
+- [ ] （待決定）已被取代的 revision，即使 resource 不需要重跑，也回傳 `superseded`，而不是 `skipped`。
+
+### committed（行為不變）
+
+- [ ] 成功 commit 時回傳 `committed` 與該次 execution identity。
+
+### rejected superseded（行為不變）
+
+- [ ] 執行期間有較新的 revision 時，回傳 `superseded` 與 `supersededBy`，晚到的結果不會成為可觀察狀態。
+
+### rejected disposed（行為不變）
+
+- [ ] 執行期間 settler 被 dispose 時，回傳 `disposed`。
+
+### rejected revoked：工作做了，但結果被丟棄
+
+- [ ] 同一個 revision 啟動了較新的 run，被取代的那次回傳 `revoked`，並帶有它自己的 execution identity。
+- [ ] 執行期間 selector 的輸入改變時，回傳 `revoked`。
+- [ ] 執行期間 resource 變成不需要重跑時，回傳 `revoked`。
+- [ ] `revoked` 的結果不會成為可觀察狀態：`emit()` 與 `valueFor()` 都不會回傳它。
+- [ ] `revoked` 不會滿足 obligation，只有取代它的那次 run commit 時才會滿足。
+- [ ] （待確認）async-runtime 吞掉結果的路徑（resource.ts:306）能否觸發；能觸發的話歸類為哪一種 outcome。
+
+### trace 用語
+
+- [ ] （待決定）trace 的 rejection reason 與 outcome 的 reason 使用同一組名稱：`superseded`、`revoked`、`disposed`。
+
 ## 階段性 review
 
 在 Phase 5、Phase 6、Phase 8 與 Phase 10 結束後各進行一次 review：
