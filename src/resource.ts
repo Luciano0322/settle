@@ -49,7 +49,7 @@ export function createSettlementResource<Input, ResourceInput, Candidate>(
   const selectedInput = computed(() =>
     descriptor.input(context.getInput() as Input),
   );
-  const equality = descriptor.equals ?? Object.is;
+  const equality = descriptor.equals ?? defaultInputEquals;
   const requirements = new WeakMap<
     SettlementRevision,
     { required: boolean; selectedInput: ResourceInput; reason: "uninitialized" | "input-changed" | "dependency-changed" }
@@ -125,15 +125,8 @@ export function createSettlementResource<Input, ResourceInput, Candidate>(
     rebind() {
       if (hasCommittedCandidate) {
         const nextInput = selectedInput.get();
-        const sameTransferredValue =
-          descriptor.equals === undefined &&
-          isJsonValue(nextInput) &&
-          isJsonValue(committedInput) &&
-          JSON.stringify(nextInput) === JSON.stringify(committedInput);
-        if (
-          equality(nextInput, committedInput as ResourceInput) ||
-          sameTransferredValue
-        ) {
+        const isSameInput = equality(nextInput, committedInput as ResourceInput);
+        if (isSameInput) {
           committedInput = nextInput;
         } else {
           hasCommittedCandidate = false;
@@ -317,4 +310,25 @@ export function createSettlementResource<Input, ResourceInput, Candidate>(
   });
 
   return { resource, registration };
+}
+
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left)) {
+    return Array.isArray(right) && left.length === right.length
+      && left.every((item, index) => jsonEqual(item, right[index]));
+  }
+  if (Array.isArray(right)) return false;
+  const leftKeys = Object.keys(left);
+  return leftKeys.length === Object.keys(right).length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key)
+      && jsonEqual((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]));
+}
+
+function defaultInputEquals(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  return isJsonValue(left) && isJsonValue(right) && jsonEqual(left, right);
 }

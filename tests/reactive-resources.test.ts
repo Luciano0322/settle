@@ -235,4 +235,98 @@ describe("reactive resources", () => {
       revision,
     });
   });
+
+  it("reuses a committed result when a JSON object input has equal content", async () => {
+    const run = vi.fn(async (input: { query: string }) => `result:${input.query}`);
+    const settler = createSettler<{ query: string; tone: string }>();
+    const resource = settler.resource({
+      input: (state) => ({ query: state.query }),
+      run,
+    });
+
+    const first = settler.receive({ query: "q1", tone: "formal" });
+    await resource.run(first);
+    const second = settler.receive({ query: "q1", tone: "casual" });
+
+    expect(resource.required(second)).toBe(false);
+    expect(resource.emit()).toBe("result:q1");
+    expect(run).toHaveBeenCalledOnce();
+    await expect(settler.settle(second)).resolves.toMatchObject({ status: "settled" });
+  });
+
+  it("treats JSON object inputs with different key order as the same input", async () => {
+    // 輸入加一個 flag，selector 依 flag 回傳 { a: 1, b: 2 } 或 { b: 2, a: 1 }
+    // 第一次 run 之後，換 flag 再 receive，驗證 required 是 false、run 只被呼叫一次
+    const run = vi.fn(async (input: {a: number; b: number}) => input.a + input.b);
+    const settler = createSettler<{ reversed: boolean}>();
+    const resource = settler.resource({
+      input: (state) => (state.reversed ? { b: 2, a: 1 } : { a: 1, b: 2 }),
+      run,
+    });
+
+    await resource.run(settler.receive({ reversed: false }));
+    const reordered = settler.receive({ reversed: true });
+
+    expect(resource.required(reordered)).toBe(false);
+    expect(resource.emit()).toBe(3);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("recomputes a Map input whose contents changed even though both serialize to the same JSON", async () => {
+    const run = vi.fn(async (input: Map<string, string>) => `result:${input.get("query")}`);
+    const settler = createSettler<{ query: string }>();
+    const resource = settler.resource({
+      input: (state) => new Map([["query", state.query]]),
+      run,
+    });
+
+    await resource.run(settler.receive({ query: "q1" }));
+    const changed = settler.receive({ query: "q2" });
+
+    expect(resource.required(changed)).toBe(true);
+    expect(resource.emit()).toBeUndefined();
+
+    await resource.run(changed);
+
+    expect(resource.emit()).toBe("result:q2");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not traverse a cyclic input when its reference is unchanged", async () => {
+    const cyclic: { value: string; self?: unknown } = { value: "a" };
+    cyclic.self = cyclic;
+    const run = vi.fn(async (input: typeof cyclic) => `result:${input.value}`);
+    const settler = createSettler<{ tone: string }>();
+    const resource = settler.resource({
+      input: () => cyclic,
+      run,
+    });
+
+    await resource.run(settler.receive({ tone: "formal" }));
+    const second = settler.receive({ tone: "casual" });
+
+    expect(resource.required(second)).toBe(false);
+    expect(resource.emit()).toBe("result:a");
+    expect(run).toHaveBeenCalledOnce();
+    await expect(settler.settle(second)).resolves.toMatchObject({ status: "settled" });
+  });
+
+  it("compares inputs containing undefined properties by reference", async () => {
+    const run = vi.fn(async (input: { q: string; filter: string | undefined }) => `result:${input.q}`);
+    const settler = createSettler<{ q: string; tone: string }>();
+    const resource = settler.resource({
+      input: (state) => ({ q: state.q, filter: undefined }),
+      run,
+    });
+
+    await resource.run(settler.receive({ q: "q1", tone: "formal" }));
+    const second = settler.receive({ q: "q1", tone: "casual" });
+
+    expect(resource.required(second)).toBe(true);
+
+    await resource.run(second);
+
+    expect(resource.emit()).toBe("result:q1");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
 });

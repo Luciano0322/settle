@@ -488,6 +488,8 @@ const output = b.emit();
 不會呼叫 resource 描述中的 `run` callback。選取的輸入改變時，會建立一個限定於該
 revision 的必要條件；選取的輸入不變時，則重用已 commit 的輸出，不需 host 執行工作。
 
+預設情況下，兩個選取輸入在以下情況視為相同：兩者都是 JSON 值且內容相等（物件 key 的順序不影響），或兩者是同一個參考。`Map`、`Date`、class instance 等非 JSON 值，以及含有 `undefined` 屬性的物件，只比較參考。若希望物件依內容比較，可選欄位請改用 `null` 或直接省略，不要設為 `undefined`。需要其他規則時，請提供 `equals`。
+
 resource 失效期間，`emit()` 不會公開先前的結果。
 這個有效性狀態本身也是 reactive 的，因此依賴它的下游 resource selector 也會失效。
 由 host 啟動的 `run(revision)` 成功時，會原子地驗證 revision、公開新結果、
@@ -708,10 +710,9 @@ await target.settler.settle(restored.revision);
 回傳的 `revision` 與所有 live handle 只屬於該 instance。
 resource 的註冊順序，不決定還原識別或下游有效性傳播。
 
-採用預設輸入相等判斷時，restore 先比較傳輸後的 JSON 輸入 key，
-再將可重用結果綁定到新的 selector 值。明確提供的 `equals` comparator 仍具有最終判定權。
+restore 與 live 評估使用相同的預設輸入相等規則，比較傳輸後的輸入與新的 selector 值。明確提供的 `equals` comparator 仍具有最終判定權。
 如果 selector 讀取到還原輸入之外已改變的相依條件，結果就會變成 required，而不是被重用。
-沒有明確 comparator 時，JSON key 比較使用序列化後的值；selector 與 comparator 必須是純函式。
+selector 與 comparator 必須是純函式。
 內部傳播會先達到穩定，再評估 settlement，全程不呼叫應用程式工作。
 
 對於未被序列化的非 resource 工作，restore 也會分別回傳可由 host 操作的 handle：

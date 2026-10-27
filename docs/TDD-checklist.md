@@ -294,6 +294,10 @@ operational failure 透過 Promise rejection 表達。
 - [x] restore 尊重明確指定的 input comparator，預設以 JSON transfer key 重新綁定。
 - [x] 不同 resource 註冊順序下，downstream validity propagation 仍持續至穩定。
 - [x] malformed counts、缺少 state 或不符 resource ID 集合時，在初始化前拒絕。
+- [x] live 與 restore 使用同一套預設輸入相等規則。
+- [x] 內容相同的 JSON 物件輸入被重用，key 順序不影響判定。
+- [x] 非 JSON 值（如內容不同的 Map）不會被判定為相等。
+- [x] 同一參考的循環物件不會造成 evaluate 失敗。
 
 ### Phase 8 exit criterion
 

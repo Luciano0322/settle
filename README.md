@@ -498,6 +498,8 @@ validity; it never calls the descriptor's `run` callback. A changed selected
 input creates one revision-scoped obligation. An unchanged selected input
 reuses its committed output without host execution.
 
+By default, two selected inputs are the same when both are JSON values with equal content (object key order does not matter), or when they are the same reference. Non-JSON values such as `Map`, `Date` or class instances, and objects containing `undefined` properties, are compared by reference only. To keep an object compared by content, use `null` or omit optional fields instead of setting them to `undefined`. Pass `equals` to define a different rule.
+
 While a resource is invalid, `emit()` does not expose its previous result.
 That validity state is reactive, so dependent resource selectors are also
 invalidated. A successful host-started `run(revision)` atomically validates the
@@ -738,13 +740,10 @@ initializing the target. The returned `revision` and all live handles belong
 only to that instance. Resource registration order does not determine restore
 identity or downstream validity propagation.
 
-For default input equality, restore compares transferred JSON input keys and
-then binds reusable results to the new selector values. An explicit `equals`
-comparator remains authoritative. If a selector reads changed dependencies
+Restore uses the same default input equality as live evaluation, comparing transferred inputs with the new selector values. An explicit `equals` comparator remains authoritative. If a selector reads changed dependencies
 outside the restored input, its result becomes required rather than reused.
-Without an explicit comparator, JSON key comparison uses serialized values;
-selectors and comparators must be pure. Internal propagation stabilizes before
-settlement is evaluated, without invoking application work.
+Selectors and comparators must be pure.
+Internal propagation stabilizes before settlement is evaluated, without invoking application work.
 
 Restore also returns separate host handles for omitted non-resource work:
 
