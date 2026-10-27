@@ -423,4 +423,31 @@ describe("snapshot and restore", () => {
       revision: restored.revision,
     });
   });
+
+  it("reuses a restored resource whose selector returns the same content in a different key order", async () => {
+    type Input = { city: string; date: string };
+    const source = createSettler<Input>({ definition });
+    const original = source.resource({
+      id: "result",
+      input: (input) => ({ city: input.city, date: input.date }),
+      run: async () => "result",
+    });
+    await original.run(source.receive({ city: "Tokyo", date: "10/01" }));
+    let hostRuns = 0;
+    const target = createSettler<Input>({ definition });
+    const restoredResource = target.resource({
+      id: "result",
+      input: (input) => ({ date: input.date, city: input.city }),
+      run: async () => {
+        hostRuns += 1;
+        return "recomputed";
+      },
+    });
+
+    const restored = target.restore(decodeJsonSnapshot(encodeJsonSnapshot(source.snapshot())));
+
+    expect(restoredResource.required(restored.revision)).toBe(false);
+    expect(restoredResource.emit()).toBe("result");
+    expect(hostRuns).toBe(0);
+  });
 });

@@ -1472,9 +1472,7 @@ reconstructed as a required obligation.
 
 Restore checks resource causal input keys against current selectors before
 reusing values, including selectors that read dependencies outside `Input`.
-With default equality, JSON transfer equality is used to rebind a reusable
-input to its new live selector value; an explicit `equals` comparator takes
-precedence. Default transfer equality compares serialized JSON values.
+Restore uses the same default input equality as live evaluation (structural for JSON values, reference otherwise) to rebind a reusable input to its new live selector value; an explicit `equals` comparator takes precedence.
 Application payloads and reusable selector keys must be JSON-compatible.
 Selectors and comparators are pure internal validity computations.
 
