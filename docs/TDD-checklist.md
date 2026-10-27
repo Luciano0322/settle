@@ -359,6 +359,18 @@ correction-graph 的實際變更位於上一層 repo 的 `feat/settle-migration`
 以 `link:../settle` 與 pinned paired-checkout CI 驗證未發布版本；既有 JSON
 baseline 不變。正式獨立使用前仍須換成已發布版本；本階段不合併或發布。
 
+## valueFor：以 revision 讀取 resource 結果
+
+- [x] 最新 revision 且 resource 有效時，回傳 valid 與已 commit 的值。
+- [x] 最新 revision 但 resource 需要重新執行時，回傳 required，不公開舊值。
+- [x] run 尚在進行中時回傳 required。
+- [x] 舊 revision 一律回傳 superseded 與 supersededBy，即使值在新 revision 仍有效。
+- [x] 輸入未改變而重用的結果，以新 revision 讀取時為 valid，且不重新執行。
+- [x] settle 完成後即使有較新 revision commit，舊 revision 也不會讀到新 revision 的值。
+- [x] restore 後可重用的結果，以還原的 revision 讀取時為 valid。
+- [x] settler dispose 之後回傳 disposed，不拋出例外。
+- [x] 不屬於此 settler 的 revision 拋出 SettlementRevisionError。
+
 ## 階段性 review
 
 在 Phase 5、Phase 6、Phase 8 與 Phase 10 結束後各進行一次 review：

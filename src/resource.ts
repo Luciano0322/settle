@@ -14,6 +14,7 @@ import {
 } from "./settlement-state.js";
 import type {
   ExecutionIdentity,
+  ResourceValue,
   SettlementResource,
   SettlementResourceDescriptor,
   SettlementRevision,
@@ -187,6 +188,31 @@ export function createSettlementResource<Input, ResourceInput, Candidate>(
   const resource: SettlementResource<Candidate> = Object.freeze({
     required(revision: SettlementRevision) {
       return requirements.get(revision)?.required === true;
+    },
+    valueFor<Revision extends SettlementRevision>(
+      revision: Revision,
+    ): ResourceValue<Candidate, Revision> {
+      if (context.isDisposed()) {
+        return Object.freeze({ status: "disposed" as const, revision });
+      }
+      const state = context.getRevisionState(revision);
+      if (state.supersededBy !== undefined) {
+        return Object.freeze({
+          status: "superseded" as const,
+          revision,
+          supersededBy: state.supersededBy,
+        });
+      }
+      // Valid only when every check passes; anything undetermined stays required.
+      if (!hasCommittedCandidate || requirements.get(revision)?.required !== false) {
+        return Object.freeze({ status: "required" as const, revision });
+      }
+      // peek(): reading at action time must not register a reactive dependency.
+      return Object.freeze({
+        status: "valid" as const,
+        revision,
+        value: committedCandidate.peek() as Candidate,
+      });
     },
     async run(revision: SettlementRevision) {
       return context.observation.transition(async () => {

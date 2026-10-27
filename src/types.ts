@@ -111,6 +111,15 @@ export type SettlementOutcome<
       supersededBy: SettlementRevision;
     }>;
 
+export type ResourceValue<
+  Candidate,
+  Revision extends SettlementRevision = SettlementRevision,
+> =
+  | Readonly<{ status: "valid"; revision: Revision; value: Candidate }>
+  | Readonly<{ status: "required"; revision: Revision }>
+  | Readonly<{ status: "superseded"; revision: Revision; supersededBy: SettlementRevision }>
+  | Readonly<{ status: "disposed"; revision: Revision }>;
+
 export type RequiredObligation = Readonly<{
   satisfy(): void;
 }>;
@@ -146,6 +155,9 @@ export type SettlementResourceDescriptor<Input, ResourceInput, Candidate> =
 
 export type SettlementResource<Candidate> = Readonly<{
   required(revision: SettlementRevision): boolean;
+  valueFor<Revision extends SettlementRevision>(
+    revision: Revision,
+  ): ResourceValue<Candidate, Revision>;
   run(
     revision: SettlementRevision,
   ): Promise<CandidateSubmissionOutcome | undefined>;

@@ -480,7 +480,10 @@ if (b.required(revision)) {
 }
 
 const outcome = await settler.settle(revision);
-const output = b.emit();
+const result = b.valueFor(revision);
+if (outcome.status === "settled" && result.status === "valid") {
+  act(result.value);
+}
 ```
 
 `resource()` 使用 signal-kernel 的相依追蹤，以及手動驅動的
@@ -495,6 +498,20 @@ resource 失效期間，`emit()` 不會公開先前的結果。
 由 host 啟動的 `run(revision)` 成功時，會原子地驗證 revision、公開新結果、
 傳播下游有效性，並滿足對應的必要條件。
 已被取代 revision 的晚到結果，不能成為可觀察狀態。
+
+`emit()` 讀取目前的結果，下游 selector 也透過它追蹤這個結果。
+它不綁定 revision：較新的 revision 到達後，它可能沒有值，也可能回傳較新 revision 的結果。
+要針對特定 revision 的結果採取行動前，請改用 `valueFor(revision)` 讀取：
+
+- `{ status: "valid", value }`：該 revision 是最新的，結果也屬於它，
+  包括因輸入未改變而重用的結果。
+- `{ status: "required" }`：該 revision 是最新的，但 resource 尚未為它產生結果。
+- `{ status: "superseded", supersededBy }`：已有較新的 revision，即使這個 resource 的結果沒有改變。
+  請改用 `supersededBy` 再讀一次；這不會讓 resource 重新執行。
+- `{ status: "disposed" }`：settler 已被 dispose。
+
+`valueFor` 是同步的。請在同一個同步步驟中檢查結果並採取行動，中間不要有 `await`，
+這樣檢查與行動之間就不會有較新的 revision 插入。
 
 穩定判定始終限定於指定的 revision：
 
@@ -516,7 +533,7 @@ firstExecution.submit(lateCandidate);
 revision 的表示方式是不透明的。呼叫端應將 `receive()` 回傳的識別傳回
 revision-scoped 操作，而不是檢查其內部結構。
 每個 revision 都只屬於一個 settler。傳入其他 settler 的 revision 時，
-`require` 與 `associateExecution` 會拋出 `SettlementRevisionError`；
+`require`、`associateExecution` 與 resource `valueFor` 會拋出 `SettlementRevisionError`；
 `settle` 與 resource `run` 則會在建立任何執行權限之前，以該錯誤 reject。
 
 `require()` 在穩定評估之前登記有效性條件。回傳 handle 的 `satisfy()` 是冪等操作，

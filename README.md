@@ -489,7 +489,10 @@ if (b.required(revision)) {
 }
 
 const outcome = await settler.settle(revision);
-const output = b.emit();
+const result = b.valueFor(revision);
+if (outcome.status === "settled" && result.status === "valid") {
+  act(result.value);
+}
 ```
 
 `resource()` uses signal-kernel dependency tracking and a manual
@@ -506,6 +509,24 @@ invalidated. A successful host-started `run(revision)` atomically validates the
 revision, exposes the new result, propagates downstream validity, and satisfies
 the corresponding obligation. A late result from a superseded revision cannot
 become observable.
+
+`emit()` reads the current result, and dependent selectors use it to track that
+result. It is not bound to a revision: once a newer revision arrives, it may
+return nothing or the newer revision's result. Before acting on the result for
+a specific revision, read it with `valueFor(revision)`:
+
+- `{ status: "valid", value }`: the revision is the latest and the result
+  belongs to it, including a result reused because its input did not change.
+- `{ status: "required" }`: the revision is the latest, but the resource has
+  not produced a result for it yet.
+- `{ status: "superseded", supersededBy }`: a newer revision exists, even if
+  this resource's result did not change. Read again with `supersededBy`; this
+  does not run the resource again.
+- `{ status: "disposed" }`: the settler was disposed.
+
+`valueFor` is synchronous. Check the result and act on it in the same
+synchronous step, with no `await` in between, so that no newer revision can
+arrive between the check and the action.
 
 Settlement remains scoped to the selected revision:
 
@@ -526,9 +547,10 @@ firstExecution.submit(lateCandidate);
 
 The revision representation is opaque. Callers pass the identity returned by
 `receive()` back to revision-scoped operations rather than inspecting it.
-Revisions belong to one settler. Foreign revisions cause `require` and
-`associateExecution` to throw `SettlementRevisionError`; `settle` and resource
-`run` reject with that error before any execution authority is created.
+Revisions belong to one settler. Foreign revisions cause `require`,
+`associateExecution`, and resource `valueFor` to throw
+`SettlementRevisionError`; `settle` and resource `run` reject with that error
+before any execution authority is created.
 
 `require()` records a validity condition before settlement evaluation. The
 returned handle's `satisfy()` operation is idempotent and only reports that the

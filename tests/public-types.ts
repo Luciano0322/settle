@@ -1,6 +1,7 @@
 import {
   createSettler,
   type CandidateSubmissionOutcome,
+  type ResourceValue,
   type SettlementExecutionError,
   type RestoredExecutionObligation,
   type SettlementSnapshot,
@@ -36,10 +37,28 @@ const resource = reactiveSettler.resource({
 
 type ResourceSurface = keyof typeof resource;
 const resourceHandleExposesOnlyHostDrivenBehavior: Expect<
-  Equal<ResourceSurface, "required" | "run" | "emit">
+  Equal<ResourceSurface, "required" | "valueFor" | "run" | "emit">
 > = true;
 void resource;
 void resourceHandleExposesOnlyHostDrivenBehavior;
+
+type ResourceValueOf = ReturnType<typeof resource.valueFor>;
+const resourceValueIsThePublicType: Expect<
+  Equal<ResourceValueOf, ResourceValue<string>>
+> = true;
+const resourceValueStatusesAreExhaustive: Expect<
+  Equal<ResourceValueOf["status"], "valid" | "required" | "superseded" | "disposed">
+> = true;
+const onlyValidResourceValueExposesValue: Expect<
+  Equal<Extract<ResourceValueOf, { value: unknown }>["status"], "valid">
+> = true;
+const validResourceValueRetainsCandidateType: Expect<
+  Equal<Extract<ResourceValueOf, { status: "valid" }>["value"], string>
+> = true;
+void resourceValueIsThePublicType;
+void resourceValueStatusesAreExhaustive;
+void onlyValidResourceValueExposesValue;
+void validResourceValueRetainsCandidateType;
 
 const disposalIsSynchronous: Expect<
   Equal<ReturnType<typeof settler.dispose>, void>
