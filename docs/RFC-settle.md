@@ -915,7 +915,10 @@ if (b.required(revision)) {
 }
 
 await settler.settle(revision);
-const output = b.emit();
+const result = b.valueFor(revision);
+if (result.status === "valid") {
+  act(result.value);
+}
 ```
 
 The resource descriptor is implemented with signal-kernel reactive primitives
@@ -974,6 +977,15 @@ scheduler. `required(revision)` reports a validity requirement;
 `run(revision)` is an explicit host command; and `emit()` exposes only the
 currently valid committed resource result. Settle never automatically invokes
 the application callback.
+
+`emit()` is not revision-bound, so a caller holding a revision cannot tell from
+it whether the value belongs to that revision. `valueFor(revision)` answers
+that question synchronously with `valid`, `required`, `superseded`, or
+`disposed`. A superseded revision is never reported as `valid`, even when the
+resource's result is unchanged in the newer revision; reading it again with
+`supersededBy` returns the reused result without running the resource. Hosts
+check the result and act on it in the same synchronous step. Selectors keep
+using `emit()`, because `valueFor` does not register a reactive dependency.
 
 The `receive`, `settle`, `emit`, and `dispose` operations, Phase 8 snapshot and
 restore, and Phase 9 `inspect`, `trace`, and `subscribe` methods are implemented.
@@ -2372,9 +2384,9 @@ feature accumulation.
 | Domain acceptance                    | Accepted                | The application defines what results are worth submitting. Settle treats candidate payloads as opaque and does not rank, score, or judge their quality. |
 | Candidate identity                   | Accepted                | Every candidate result is associated with an identified execution and causal revision.                                                           |
 | Atomic validation and commit         | Accepted                | Candidate causal commit eligibility validation and observable commit are atomic with respect to causal revision changes; this is not domain-quality validation. |
-| Reactive resource interface          | Accepted for Phase 6    | `resource({ input, run })` returns only `required(revision)`, host-driven `run(revision)`, and validity-guarded `emit()`. It preserves selective invalidation without becoming a scheduler. |
+| Reactive resource interface          | Accepted for Phase 6    | `resource({ input, run })` returns only `required(revision)`, revision-bound `valueFor(revision)`, host-driven `run(revision)`, and validity-guarded `emit()`. It preserves selective invalidation without becoming a scheduler. |
 | Async-runtime alignment              | Accepted                | Reactive resources directly use the compatible async-runtime `0.4.1` manual-resource contract; the correction POC's `0.3.0` dependency is not the baseline. |
-| `emit()` after supersession           | Deferred                | Decide whether callers must use `inspect()` for the last stable output or whether `emit()` exposes only output settled for the authoritative revision. |
+| `emit()` after supersession           | Accepted for resources  | Resource `emit()` stays current and is not revision-bound; revision-bound reads use `valueFor(revision)`, which never reports a superseded revision as `valid`. Settler-level `emit()` remains deferred. |
 | Operational error precedence         | Accepted for Phase 7    | Relevant required resource failures reject run and waiting settlement with `SettlementExecutionError`; explicit host retry can recover for a new settlement call. Already terminated Promises keep their result. Supersession observed before failure preserves `superseded`; disposal rejects pending authoritative settlement with `SettlerDisposedError`. |
 | Retry ownership                      | Accepted                | Host responsibility. Settle v1 performs no automatic retry.                                                                                      |
 | Cancellation requirement             | Rejected                | Supersession and commit validation guarantee correctness independently of physical cancellation.                                                 |

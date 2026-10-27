@@ -10,6 +10,7 @@ export type {
   ExecutionAssociationOptions,
   ExecutionIdentity,
   RequiredObligation,
+  ResourceValue,
   RestoredExecutionObligation,
   RestoredSettlement,
   SettlementExecution,
